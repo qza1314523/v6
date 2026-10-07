@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/surfmore/v6.git}"
+REPO_URL="${REPO_URL:-https://github.com/qza1314523/v6.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/ipv6proxy}"
-SERVICE_FILE="/etc/systemd/system/ipv6proxy.service"
+HE_ENV_FILE="/etc/default/he-ipv6"
+PROXY_ENV_FILE="/etc/default/ipv6proxy"
+HE_SERVICE="/etc/systemd/system/he-ipv6.service"
+PROXY_SERVICE="/etc/systemd/system/ipv6proxy.service"
 
-if [[ "${EUID}" -ne 0 ]]; then
-  echo "请使用 root 运行: sudo ./install.sh" >&2
-  exit 1
-fi
-for command in apt-get git systemctl; do
+[[ "${EUID}" -eq 0 ]] || { echo "请使用 root 运行: sudo ./install.sh" >&2; exit 1; }
+for command in apt-get git systemctl ip; do
   command -v "$command" >/dev/null || { echo "缺少依赖: $command" >&2; exit 1; }
 done
 
@@ -28,22 +28,78 @@ else
 fi
 
 mkdir -p "$INSTALL_DIR/bin"
-(
-  cd "$INSTALL_DIR/src"
-  go mod download
-  go build -trimpath -ldflags='-s -w' -o "$INSTALL_DIR/bin/ipv6proxy" ./cmd/ipv6proxy
-)
+(cd "$INSTALL_DIR/src" && go mod download && go build -trimpath -ldflags='-s -w' -o "$INSTALL_DIR/bin/ipv6proxy" ./cmd/ipv6proxy)
 
-cat > "$SERVICE_FILE" <<EOF
+cat > "$HE_SERVICE" <<'EOF'
 [Unit]
-Description=IPv6 egress proxy
+Description=Hurricane Electric 6in4 IPv6 tunnel
 After=network-online.target
 Wants=network-online.target
+Before=ipv6proxy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/default/he-ipv6
+ExecStart=/usr/local/sbin/he-ipv6-up
+ExecStop=/usr/local/sbin/he-ipv6-down
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /usr/local/sbin/he-ipv6-up <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source /etc/default/he-ipv6
+: "${HE_SERVER_IPV4:?HE_SERVER_IPV4 is required}"
+: "${LOCAL_IPV4:?LOCAL_IPV4 is required}"
+: "${HE_SERVER_IPV6:?HE_SERVER_IPV6 is required}"
+: "${LOCAL_IPV6:?LOCAL_IPV6 is required}"
+: "${HE_ROUTED_PREFIX:?HE_ROUTED_PREFIX is required}"
+: "${HE_TUNNEL_NAME:?HE_TUNNEL_NAME is required}"
+
+ip tunnel show "$HE_TUNNEL_NAME" >/dev/null 2>&1 && exit 0
+ip tunnel add "$HE_TUNNEL_NAME" mode sit remote "$HE_SERVER_IPV4" local "$LOCAL_IPV4" ttl 255
+ip link set "$HE_TUNNEL_NAME" mtu "${HE_MTU:-1480}"
+ip link set "$HE_TUNNEL_NAME" up
+ip -6 addr add "$LOCAL_IPV6" dev "$HE_TUNNEL_NAME"
+ip -6 route replace "$HE_ROUTED_PREFIX" dev "$HE_TUNNEL_NAME"
+ip -6 route replace ::/0 via "$HE_SERVER_IPV6" dev "$HE_TUNNEL_NAME"
+EOF
+
+cat > /usr/local/sbin/he-ipv6-down <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source /etc/default/he-ipv6
+ip link set "$HE_TUNNEL_NAME" down 2>/dev/null || true
+ip tunnel del "$HE_TUNNEL_NAME" 2>/dev/null || true
+EOF
+chmod 0755 /usr/local/sbin/he-ipv6-up /usr/local/sbin/he-ipv6-down
+
+if [[ ! -f "$HE_ENV_FILE" ]]; then
+  cat > "$HE_ENV_FILE" <<'EOF'
+# HE tunnel endpoint and local tunnel address.
+HE_SERVER_IPV4=
+LOCAL_IPV4=
+HE_SERVER_IPV6=
+LOCAL_IPV6=
+HE_ROUTED_PREFIX=
+HE_TUNNEL_NAME=he-ipv6
+HE_MTU=1480
+EOF
+fi
+
+cat > "$PROXY_SERVICE" <<EOF
+[Unit]
+Description=IPv6 egress proxy
+Requires=he-ipv6.service
+After=he-ipv6.service network-online.target
 
 [Service]
 Type=simple
 ExecStart=$INSTALL_DIR/bin/ipv6proxy -cidr \\${IPV6_PROXY_CIDR} -real-ipv4 \\${IPV6_PROXY_REAL_IPV4} -random-ipv6-port \\${IPV6_PROXY_RANDOM_PORT:-100} -real-ipv4-port \\${IPV6_PROXY_REAL_PORT:-101}
-EnvironmentFile=-/etc/default/ipv6proxy
+EnvironmentFile=-$PROXY_ENV_FILE
 WorkingDirectory=$INSTALL_DIR
 Restart=on-failure
 RestartSec=3
@@ -57,14 +113,18 @@ ReadWritePaths=$INSTALL_DIR
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/default/ipv6proxy <<'EOF'
-# Required values. Edit before starting the service.
+if [[ ! -f "$PROXY_ENV_FILE" ]]; then
+  cat > "$PROXY_ENV_FILE" <<'EOF'
 IPV6_PROXY_CIDR=
 IPV6_PROXY_REAL_IPV4=
 IPV6_PROXY_RANDOM_PORT=100
 IPV6_PROXY_REAL_PORT=101
 EOF
+fi
 
 systemctl daemon-reload
-echo "安装完成。编辑 /etc/default/ipv6proxy 后执行:"
-echo "  systemctl enable --now ipv6proxy"
+echo "已安装 HE 6in4 隧道和代理。"
+echo "1. 编辑 $HE_ENV_FILE，填写 HE 参数"
+echo "2. 编辑 $PROXY_ENV_FILE，填写代理参数"
+echo "3. 验证: systemctl start he-ipv6 && ping -6 -c 3 2606:4700:4700::1111"
+echo "4. 启动: systemctl enable --now ipv6proxy"

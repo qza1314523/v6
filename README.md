@@ -7,8 +7,9 @@
 ## Requirements
 
 - Linux，Go 1.21 或更新版本
-- 可用的 IPv6 前缀及 IPv6 出站路由
+- HE Tunnelbroker 账号提供的 6in4 参数，或已经建立好的 IPv6 网络
 - 对随机 IPv6 源地址进行非本地绑定时，需要 root/capability 和 `net.ipv6.ip_nonlocal_bind=1`
+- Linux 内核启用 `sit`/6in4 支持；云主机还必须允许协议号 41（IPv6-in-IPv4）
 
 ## Build and run
 
@@ -49,24 +50,46 @@ sudo ./ipv6proxy \
 
 Automatic route/sysctl changes need root privileges. Pass `-auto-route=false -auto-forwarding=false -auto-ip-nonlocal-bind=false` when managing networking separately. These system-level changes are not automatically reverted at shutdown.
 
-## Install as a service
+## Install HE 6in4 tunnel and proxy
 
-On Debian/Ubuntu, run from the cloned repository:
+The installer creates two systemd units:
+
+- `he-ipv6.service`: creates and removes the Linux `sit` tunnel
+- `ipv6proxy.service`: starts after the tunnel is active
+
+Run on Debian/Ubuntu:
 
 ```sh
 sudo ./install.sh
-sudoedit /etc/default/ipv6proxy
+sudoedit /etc/default/he-ipv6
 ```
 
-Set `IPV6_PROXY_CIDR` and `IPV6_PROXY_REAL_IPV4`, then start the service:
+Fill the values from HE Tunnelbroker. Example:
+
+```ini
+HE_SERVER_IPV4=198.51.100.1
+LOCAL_IPV4=203.0.113.10
+HE_SERVER_IPV6=2001:db8:1::1
+LOCAL_IPV6=2001:db8:1::2/64
+HE_ROUTED_PREFIX=2001:db8:2::/64
+HE_TUNNEL_NAME=he-ipv6
+HE_MTU=1480
+```
+
+`HE_SERVER_IPV4` is the HE endpoint, `LOCAL_IPV4` is an IPv4 address assigned to this host, `HE_SERVER_IPV6` is the tunnel peer gateway, `LOCAL_IPV6` is the local tunnel address, and `HE_ROUTED_PREFIX` is the routed prefix used by the proxy. Replace all documentation addresses with the real values from HE; the example uses documentation-only ranges.
+
+Then configure the proxy:
 
 ```sh
+sudoedit /etc/default/ipv6proxy
+sudo systemctl enable --now he-ipv6
+ping -6 -c 3 2606:4700:4700::1111
 sudo systemctl enable --now ipv6proxy
-sudo systemctl status ipv6proxy
-sudo journalctl -u ipv6proxy -f
+sudo systemctl status he-ipv6 ipv6proxy
+sudo journalctl -u he-ipv6 -u ipv6proxy -f
 ```
 
-The installer builds `/opt/ipv6proxy/bin/ipv6proxy`. It does not create an HE tunnel, alter `/etc/network/interfaces`, or open firewall ports. Configure those for your environment before enabling the service.
+The host or cloud firewall must allow IPv4 protocol 41 between this machine and the HE endpoint. If the tunnel fails, check `ip tunnel show he-ipv6`, `ip -6 addr show dev he-ipv6`, and `ip -6 route`. The installer does not alter `/etc/network/interfaces` or open firewall ports.
 
 ## Development
 
