@@ -63,6 +63,7 @@ cat > /usr/local/sbin/he-ipv6-up <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source /etc/default/he-ipv6
+HE_SERVER_IPV6="${HE_SERVER_IPV6%%/*}"
 : "${HE_SERVER_IPV4:?HE_SERVER_IPV4 is required}"
 : "${LOCAL_IPV4:?LOCAL_IPV4 is required}"
 : "${HE_SERVER_IPV6:?HE_SERVER_IPV6 is required}"
@@ -271,6 +272,12 @@ IFS= read -r START_NOW < /dev/tty || exit 1
 if [[ ! "$START_NOW" =~ ^[Nn]$ ]]; then
   systemctl enable he-ipv6.service ipv6proxy.service
   systemctl start he-ipv6.service
+  if ! ip -6 route show default | grep -q 'dev he-ipv6'; then
+    echo "HE 隧道默认 IPv6 路由未建立，最近日志：" >&2
+    ip -6 route >&2 || true
+    systemctl stop he-ipv6.service
+    exit 1
+  fi
   systemctl start ipv6proxy.service
   sleep 1
   if ! systemctl is-active --quiet ipv6proxy.service; then
