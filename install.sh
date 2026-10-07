@@ -71,22 +71,27 @@ HE_SERVER_IPV6="${HE_SERVER_IPV6%%/*}"
 : "${HE_ROUTED_PREFIX:?HE_ROUTED_PREFIX is required}"
 : "${HE_TUNNEL_NAME:?HE_TUNNEL_NAME is required}"
 
+TUNNEL_CREATED=0
+cleanup() {
+  if [[ "$TUNNEL_CREATED" -eq 1 ]]; then
+    ip link set "$HE_TUNNEL_NAME" down 2>/dev/null || true
+    ip tunnel del "$HE_TUNNEL_NAME" 2>/dev/null || true
+  fi
+}
+trap 'status=$?; echo "HE 隧道配置失败，命令退出码: $status" >&2; cleanup; exit "$status"' ERR
 if ip tunnel show "$HE_TUNNEL_NAME" >/dev/null 2>&1; then
   ip link set "$HE_TUNNEL_NAME" down 2>/dev/null || true
-  ip tunnel del "$HE_TUNNEL_NAME"
-fi
-cleanup() {
-  ip link set "$HE_TUNNEL_NAME" down 2>/dev/null || true
   ip tunnel del "$HE_TUNNEL_NAME" 2>/dev/null || true
-}
-trap cleanup ERR
+fi
 ip tunnel add "$HE_TUNNEL_NAME" mode sit remote "$HE_SERVER_IPV4" local "$LOCAL_IPV4" ttl 255
+TUNNEL_CREATED=1
 ip link set "$HE_TUNNEL_NAME" mtu "${HE_MTU:-1480}"
 ip link set "$HE_TUNNEL_NAME" up
 ip -6 addr add "$LOCAL_IPV6" dev "$HE_TUNNEL_NAME"
 ip -6 route replace "$HE_SERVER_IPV6/128" dev "$HE_TUNNEL_NAME"
 ip -6 route replace "$HE_ROUTED_PREFIX" dev "$HE_TUNNEL_NAME"
 ip -6 route replace default via "$HE_SERVER_IPV6" dev "$HE_TUNNEL_NAME" onlink
+TUNNEL_CREATED=0
 trap - ERR
 EOF
 
