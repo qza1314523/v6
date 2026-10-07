@@ -16,6 +16,7 @@ command -v git >/dev/null || missing_packages+=(git)
 command -v ip >/dev/null || missing_packages+=(iproute2)
 command -v systemctl >/dev/null || missing_packages+=(systemd)
 command -v go >/dev/null || missing_packages+=(golang-go)
+command -v gcc >/dev/null || missing_packages+=(build-essential)
 
 if ((${#missing_packages[@]} > 0)); then
   echo "安装缺少的依赖: ${missing_packages[*]}"
@@ -23,7 +24,7 @@ if ((${#missing_packages[@]} > 0)); then
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing_packages[@]}"
 fi
 
-for command in git ip systemctl go; do
+for command in git ip systemctl go gcc; do
   command -v "$command" >/dev/null || { echo "依赖安装失败: $command" >&2; exit 1; }
 done
 
