@@ -200,7 +200,7 @@ After=he-ipv6.service network-online.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/bin/ipv6proxy -cidr \\${IPV6_PROXY_CIDR} -real-ipv4 \\${IPV6_PROXY_REAL_IPV4} -random-ipv6-port \\${IPV6_PROXY_RANDOM_PORT:-100} -real-ipv4-port \\${IPV6_PROXY_REAL_PORT:-101}
+ExecStart=$INSTALL_DIR/bin/ipv6proxy -cidr $IPV6_PROXY_CIDR -real-ipv4 $IPV6_PROXY_REAL_IPV4 -random-ipv6-port $IPV6_PROXY_RANDOM_PORT -real-ipv4-port $IPV6_PROXY_REAL_PORT
 EnvironmentFile=-$PROXY_ENV_FILE
 WorkingDirectory=$INSTALL_DIR
 Restart=on-failure
@@ -272,6 +272,12 @@ if [[ ! "$START_NOW" =~ ^[Nn]$ ]]; then
   systemctl enable he-ipv6.service ipv6proxy.service
   systemctl start he-ipv6.service
   systemctl start ipv6proxy.service
+  sleep 1
+  if ! systemctl is-active --quiet ipv6proxy.service; then
+    echo "代理服务启动失败，最近日志：" >&2
+    journalctl -u ipv6proxy.service -n 50 --no-pager >&2
+    exit 1
+  fi
   echo "HE 隧道和代理已启动。"
   echo "开始测试代理出口 IP..."
   for proxy_port in "$IPV6_PROXY_RANDOM_PORT" "$IPV6_PROXY_REAL_PORT"; do
