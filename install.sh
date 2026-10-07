@@ -18,6 +18,7 @@ command -v systemctl >/dev/null || missing_packages+=(systemd)
 command -v go >/dev/null || missing_packages+=(golang-go)
 command -v gcc >/dev/null || missing_packages+=(build-essential)
 command -v curl >/dev/null || missing_packages+=(curl)
+command -v modprobe >/dev/null || missing_packages+=(kmod)
 
 if ((${#missing_packages[@]} > 0)); then
   echo "安装缺少的依赖: ${missing_packages[*]}"
@@ -25,7 +26,7 @@ if ((${#missing_packages[@]} > 0)); then
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing_packages[@]}"
 fi
 
-for command in git ip systemctl go gcc curl; do
+for command in git ip systemctl go gcc curl modprobe; do
   command -v "$command" >/dev/null || { echo "依赖安装失败: $command" >&2; exit 1; }
 done
 
@@ -71,19 +72,31 @@ HE_SERVER_IPV6="${HE_SERVER_IPV6%%/*}"
 : "${HE_ROUTED_PREFIX:?HE_ROUTED_PREFIX is required}"
 : "${HE_TUNNEL_NAME:?HE_TUNNEL_NAME is required}"
 
+if ! modprobe sit 2>&1; then
+  echo "无法加载 Linux sit/6in4 隧道模块。确认内核启用 SIT，并确认云平台允许 IPv4 协议 41。" >&2
+  exit 1
+fi
+
 TUNNEL_CREATED=0
 cleanup() {
+  local status=$?
+  trap - ERR
   if [[ "$TUNNEL_CREATED" -eq 1 ]]; then
     ip link set "$HE_TUNNEL_NAME" down 2>/dev/null || true
     ip tunnel del "$HE_TUNNEL_NAME" 2>/dev/null || true
   fi
+  return "$status"
 }
-trap 'status=$?; echo "HE 隧道配置失败，命令退出码: $status" >&2; cleanup; exit "$status"' ERR
+trap cleanup ERR
 if ip tunnel show "$HE_TUNNEL_NAME" >/dev/null 2>&1; then
   ip link set "$HE_TUNNEL_NAME" down 2>/dev/null || true
   ip tunnel del "$HE_TUNNEL_NAME" 2>/dev/null || true
 fi
-ip tunnel add "$HE_TUNNEL_NAME" mode sit remote "$HE_SERVER_IPV4" local "$LOCAL_IPV4" ttl 255
+if ! add_output=$(ip tunnel add "$HE_TUNNEL_NAME" mode sit remote "$HE_SERVER_IPV4" local "$LOCAL_IPV4" ttl 255 2>&1); then
+  echo "创建 6in4 tunnel 失败: $add_output" >&2
+  echo "检查本机 IPv4 是否配置在网卡上，并确认云平台允许 IPv4 协议号 41。" >&2
+  exit 1
+fi
 TUNNEL_CREATED=1
 ip link set "$HE_TUNNEL_NAME" mtu "${HE_MTU:-1480}"
 ip link set "$HE_TUNNEL_NAME" up
