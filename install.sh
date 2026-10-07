@@ -101,9 +101,9 @@ TUNNEL_CREATED=1
 ip link set "$HE_TUNNEL_NAME" mtu "${HE_MTU:-1480}"
 ip link set "$HE_TUNNEL_NAME" up
 ip -6 addr add "$LOCAL_IPV6" dev "$HE_TUNNEL_NAME"
-ip -6 route replace "$HE_SERVER_IPV6/128" dev "$HE_TUNNEL_NAME"
-ip -6 route replace "$HE_ROUTED_PREFIX" dev "$HE_TUNNEL_NAME"
-ip -6 route replace default via "$HE_SERVER_IPV6" dev "$HE_TUNNEL_NAME" onlink
+ip -6 route replace "$HE_SERVER_IPV6/128" dev "$HE_TUNNEL_NAME" metric 50
+ip -6 route replace "$HE_ROUTED_PREFIX" dev "$HE_TUNNEL_NAME" metric 50
+ip -6 route replace default via "$HE_SERVER_IPV6" dev "$HE_TUNNEL_NAME" onlink metric 50
 TUNNEL_CREATED=0
 trap - ERR
 EOF

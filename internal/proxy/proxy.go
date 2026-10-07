@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 
 	"math/big"
 	"net"
@@ -72,6 +73,7 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 		}
 		server, err := (&net.Dialer{Timeout: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: outgoingIP}}).Dial("tcp", req.URL.Host)
 		if err != nil {
+			log.Printf("CONNECT %s from %s failed: %v", req.URL.Host, outgoingIP, err)
 			writeProxyError(client, req, err)
 			return
 		}
