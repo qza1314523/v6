@@ -1,12 +1,11 @@
 package proxy
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
+
 	"math/big"
 	"net"
 	"net/http"
@@ -42,19 +41,6 @@ func generateRandomIPv6(cidr string) (net.IP, error) {
 	return ip, nil
 }
 
-func getIPv6Address(domain string) (string, error) {
-	ips, err := net.DefaultResolver.LookupIP(context.Background(), "ip6", domain)
-	if err != nil {
-		return "", err
-	}
-	for _, ip := range ips {
-		if ip.To4() == nil {
-			return ip.String(), nil
-		}
-	}
-	return "", fmt.Errorf("no IPv6 address found for %s", domain)
-}
-
 func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpServer {
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = cfg.Verbose
@@ -67,7 +53,6 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 		if err != nil {
 			return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusBadGateway, err.Error())
 		}
-		log.Printf("HTTP: %s from %s", req.URL.Host, outgoingIP)
 		transport := newTransport(outgoingIP)
 		ctx.RoundTripper = goproxy.RoundTripperFunc(func(request *http.Request, _ *goproxy.ProxyCtx) (*http.Response, error) {
 			return transport.RoundTrip(request)

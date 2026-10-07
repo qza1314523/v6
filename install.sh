@@ -17,6 +17,7 @@ command -v ip >/dev/null || missing_packages+=(iproute2)
 command -v systemctl >/dev/null || missing_packages+=(systemd)
 command -v go >/dev/null || missing_packages+=(golang-go)
 command -v gcc >/dev/null || missing_packages+=(build-essential)
+command -v curl >/dev/null || missing_packages+=(curl)
 
 if ((${#missing_packages[@]} > 0)); then
   echo "安装缺少的依赖: ${missing_packages[*]}"
@@ -24,7 +25,7 @@ if ((${#missing_packages[@]} > 0)); then
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing_packages[@]}"
 fi
 
-for command in git ip systemctl go gcc; do
+for command in git ip systemctl go gcc curl; do
   command -v "$command" >/dev/null || { echo "依赖安装失败: $command" >&2; exit 1; }
 done
 
@@ -153,7 +154,7 @@ derive_local_ipv6() {
 
 echo
 echo "=== HE 6in4 隧道配置 ==="
- echo "HE Tunnelbroker 参数：只需输入以下三项：HE 服务端 IPv4、HE 服务端 IPv6 地址和 Routed /64 或 /48；本机 IPv4 自动检测/选择，本机隧道 IPv6 自动生成，MTU 固定为 1480。"
+ echo "HE Tunnelbroker 参数：只需输入三项；本机 IPv4 和隧道 IPv6 自动生成，MTU 固定为 1480。"
 prompt_required HE_SERVER_IPV4 "Server IPv4 Address"
 prompt_required HE_SERVER_IPV6 "Server IPv6 Address（例如 2001:470:23:5d0::1/64）"
 select_local_ipv4
@@ -174,11 +175,15 @@ EOF
 
 echo
  echo "=== 代理配置 ==="
-echo "代理将自动使用 Routed 前缀、已选择的本机 IPv4 和固定端口 100/101。"
+echo "代理自动使用 Routed 前缀和已选择的本机 IPv4。"
 IPV6_PROXY_CIDR="$HE_ROUTED_PREFIX"
 IPV6_PROXY_REAL_IPV4="$LOCAL_IPV4"
-IPV6_PROXY_RANDOM_PORT=100
-IPV6_PROXY_REAL_PORT=101
+prompt_optional IPV6_PROXY_RANDOM_PORT "随机 IPv6 代理端口" "100"
+while true; do
+  prompt_optional IPV6_PROXY_REAL_PORT "IPv4 代理端口" "101"
+  [[ "$IPV6_PROXY_REAL_PORT" != "$IPV6_PROXY_RANDOM_PORT" ]] && break
+  echo "两个代理端口不能相同，请重新输入。" >&2
+done
 
 cat > "$PROXY_ENV_FILE" <<EOF
 IPV6_PROXY_CIDR=$IPV6_PROXY_CIDR
@@ -210,9 +215,57 @@ ReadWritePaths=$INSTALL_DIR
 WantedBy=multi-user.target
 EOF
 
+cat > /usr/local/sbin/ipv6proxyctl <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+HE_ENV_FILE="$HE_ENV_FILE"
+PROXY_ENV_FILE="$PROXY_ENV_FILE"
+SRC_DIR="$INSTALL_DIR/src"
+BIN="$INSTALL_DIR/bin/ipv6proxy"
+
+test_proxy() {
+  source "\$PROXY_ENV_FILE"
+  for port in "\$IPV6_PROXY_RANDOM_PORT" "\$IPV6_PROXY_REAL_PORT"; do
+    if ipaddr=\$(curl --silent --show-error --max-time 20 --proxy "http://127.0.0.1:\$port" https://api.ipify.org); then
+      echo "端口 \$port 成功，出口 IP: \$ipaddr"
+    else
+      echo "端口 \$port 失败"
+    fi
+  done
+}
+
+while true; do
+  echo
+  echo "IPv6 Proxy 管理菜单"
+  echo "1) 修改配置"
+  echo "2) 启动服务"
+  echo "3) 停止服务"
+  echo "4) 重启服务"
+  echo "5) 设置开机自启动"
+  echo "6) 取消开机自启动"
+  echo "7) 更新程序"
+  echo "8) 测试代理出口 IP"
+  echo "9) 查看状态"
+  echo "0) 退出"
+  read -r -p "请选择: " choice < /dev/tty
+  case "\$choice" in
+    1) "\${EDITOR:-nano}" "\$HE_ENV_FILE"; "\${EDITOR:-nano}" "\$PROXY_ENV_FILE"; systemctl daemon-reload ;;
+    2) systemctl enable --now he-ipv6.service ipv6proxy.service ;;
+    3) systemctl stop ipv6proxy.service he-ipv6.service ;;
+    4) systemctl restart he-ipv6.service ipv6proxy.service ;;
+    5) systemctl enable he-ipv6.service ipv6proxy.service ;;
+    6) systemctl disable he-ipv6.service ipv6proxy.service ;;
+    7) git -C "\$SRC_DIR" fetch --depth 1 origin main && git -C "\$SRC_DIR" reset --hard origin/main && (cd "\$SRC_DIR" && go build -trimpath -ldflags='-s -w' -o "\$BIN" ./cmd/ipv6proxy) && systemctl restart ipv6proxy.service ;;
+    8) test_proxy ;;
+    9) systemctl --no-pager status he-ipv6.service ipv6proxy.service ;;
+    0) exit 0 ;;
+    *) echo "无效选项" ;;
+  esac
+done
+EOF
+chmod 0755 /usr/local/sbin/ipv6proxyctl
+
 systemctl daemon-reload
-echo
-echo "配置已写入 $HE_ENV_FILE 和 $PROXY_ENV_FILE"
 printf "现在启动 HE 隧道和代理服务？[Y/n]: " >&2
 IFS= read -r START_NOW < /dev/tty || exit 1
 if [[ ! "$START_NOW" =~ ^[Nn]$ ]]; then
@@ -220,6 +273,14 @@ if [[ ! "$START_NOW" =~ ^[Nn]$ ]]; then
   systemctl start he-ipv6.service
   systemctl start ipv6proxy.service
   echo "HE 隧道和代理已启动。"
+  echo "开始测试代理出口 IP..."
+  for proxy_port in "$IPV6_PROXY_RANDOM_PORT" "$IPV6_PROXY_REAL_PORT"; do
+    if proxy_ip=$(curl --silent --show-error --max-time 20 --proxy "http://127.0.0.1:$proxy_port" https://api.ipify.org); then
+      echo "端口 $proxy_port 测试成功，出口 IP: $proxy_ip"
+    else
+      echo "端口 $proxy_port 测试失败，请检查: journalctl -u ipv6proxy -n 50 --no-pager" >&2
+    fi
+  done
 else
   echo "已跳过启动。稍后执行: systemctl enable --now ipv6proxy"
 fi
