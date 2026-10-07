@@ -9,14 +9,23 @@ HE_SERVICE="/etc/systemd/system/he-ipv6.service"
 PROXY_SERVICE="/etc/systemd/system/ipv6proxy.service"
 
 [[ "${EUID}" -eq 0 ]] || { echo "请使用 root 运行: sudo ./install.sh" >&2; exit 1; }
-for command in apt-get git systemctl ip; do
-  command -v "$command" >/dev/null || { echo "缺少依赖: $command" >&2; exit 1; }
-done
+command -v apt-get >/dev/null || { echo "仅支持 Debian/Ubuntu 系统" >&2; exit 1; }
 
-if ! command -v go >/dev/null; then
+missing_packages=()
+command -v git >/dev/null || missing_packages+=(git)
+command -v ip >/dev/null || missing_packages+=(iproute2)
+command -v systemctl >/dev/null || missing_packages+=(systemd)
+command -v go >/dev/null || missing_packages+=(golang-go)
+
+if ((${#missing_packages[@]} > 0)); then
+  echo "安装缺少的依赖: ${missing_packages[*]}"
   apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends golang-go
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing_packages[@]}"
 fi
+
+for command in git ip systemctl go; do
+  command -v "$command" >/dev/null || { echo "依赖安装失败: $command" >&2; exit 1; }
+done
 
 mkdir -p "$INSTALL_DIR"
 if [[ -d "$INSTALL_DIR/src/.git" ]]; then
