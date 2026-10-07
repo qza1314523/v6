@@ -153,13 +153,13 @@ derive_local_ipv6() {
 
 echo
 echo "=== HE 6in4 隧道配置 ==="
- echo "HE Tunnelbroker 参数：输入 HE 服务端 IPv4、HE 服务端 IPv6 网关和 HE 路由前缀；本机公网 IPv4 会自动检测/选择，本机隧道 IPv6 自动由网关生成，MTU 固定为 1480。"
-prompt_required HE_SERVER_IPV4 "HE 服务端 IPv4"
-prompt_required HE_SERVER_IPV6 "HE 服务端 IPv6 网关"
+ echo "HE Tunnelbroker 参数：只需输入以下三项：HE 服务端 IPv4、HE 服务端 IPv6 地址和 Routed /64 或 /48；本机 IPv4 自动检测/选择，本机隧道 IPv6 自动生成，MTU 固定为 1480。"
+prompt_required HE_SERVER_IPV4 "Server IPv4 Address"
+prompt_required HE_SERVER_IPV6 "Server IPv6 Address（例如 2001:470:23:5d0::1/64）"
 select_local_ipv4
 LOCAL_IPV6="$(derive_local_ipv6 "$HE_SERVER_IPV6")"
 echo "自动生成本机隧道 IPv6: $LOCAL_IPV6" >&2
-prompt_required HE_ROUTED_PREFIX "HE 路由前缀（例如 2001:db8:2::/64）"
+prompt_required HE_ROUTED_PREFIX "Routed IPv6 Prefix（/64 或 /48）"
 HE_MTU=1480
 
 cat > "$HE_ENV_FILE" <<EOF
@@ -174,10 +174,11 @@ EOF
 
 echo
  echo "=== 代理配置 ==="
-prompt_optional IPV6_PROXY_CIDR "随机 IPv6 源地址前缀" "$HE_ROUTED_PREFIX"
-prompt_required IPV6_PROXY_REAL_IPV4 "IPv4 出站地址" "$LOCAL_IPV4"
-prompt_optional IPV6_PROXY_RANDOM_PORT "随机 IPv6 代理端口" "100"
-prompt_optional IPV6_PROXY_REAL_PORT "IPv4 代理端口" "101"
+echo "代理将自动使用 Routed 前缀、已选择的本机 IPv4 和固定端口 100/101。"
+IPV6_PROXY_CIDR="$HE_ROUTED_PREFIX"
+IPV6_PROXY_REAL_IPV4="$LOCAL_IPV4"
+IPV6_PROXY_RANDOM_PORT=100
+IPV6_PROXY_REAL_PORT=101
 
 cat > "$PROXY_ENV_FILE" <<EOF
 IPV6_PROXY_CIDR=$IPV6_PROXY_CIDR

@@ -1,5 +1,21 @@
 # IPv6 Egress Proxy
 
+## 快速一键部署
+
+在全新的 Debian/Ubuntu 服务器上只执行这一条命令：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/qza1314523/v6/main/install.sh | sudo bash
+```
+
+安装程序会自动安装依赖、构建程序，并只询问 3 项 HE 参数：
+
+1. `Server IPv4 Address`
+2. `Server IPv6 Address`
+3. `Routed IPv6 Prefix`，支持 `/64` 或 `/48`
+
+本机公网 IPv4 自动获取；检测到多个地址时选择序号。本机隧道 IPv6 自动按 HE 网关生成，MTU 固定为 `1480`。代理前缀自动使用 Routed 前缀，端口固定为 `100` 和 `101`.
+
 基于 HE IPv6 前缀提供两种 HTTP/HTTPS 正向代理入口：端口 `100` 使用前缀内随机 IPv6 源地址，端口 `101` 使用指定的本机 IPv4 源地址。项目只负责代理，不会代替你建立 HE 隧道或自动配置云服务商网络。
 
 > 使用前确认你拥有该 IPv6 前缀，且已按系统/云平台要求完成路由、NDP/邻居发现和防火墙配置。代理默认监听 `0.0.0.0`，生产环境请限制来源 IP，并启用认证。
@@ -58,7 +74,7 @@ On a fresh Debian/Ubuntu server, run:
 curl -fsSL https://raw.githubusercontent.com/qza1314523/v6/main/install.sh | sudo bash
 ```
 
-The installer installs missing Debian/Ubuntu packages (`git`, `iproute2`, `systemd`, `golang-go`, and `build-essential`), asks for the HE and proxy settings in the current terminal, writes both configuration files, and offers to start both services.
+The installer installs missing Debian/Ubuntu packages (`git`, `iproute2`, `systemd`, `golang-go`, and `build-essential`), asks only for the three HE values in the current terminal, detects the local public IPv4, derives the local tunnel IPv6, writes both configuration files, and offers to start both services.
 
 ```sh
 sudoedit /etc/default/he-ipv6
