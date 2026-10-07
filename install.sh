@@ -281,10 +281,11 @@ printf "现在启动 HE 隧道和代理服务？[Y/n]: " >&2
 IFS= read -r START_NOW < /dev/tty || exit 1
 if [[ ! "$START_NOW" =~ ^[Nn]$ ]]; then
   systemctl enable he-ipv6.service ipv6proxy.service
-  systemctl start he-ipv6.service
-  if ! systemctl is-active --quiet he-ipv6.service; then
-    echo "HE 隧道服务启动失败，最近日志：" >&2
-    journalctl -u he-ipv6.service -n 50 --no-pager >&2
+  if ! systemctl start he-ipv6.service; then
+    echo "HE 隧道启动失败，最近日志：" >&2
+    journalctl -u he-ipv6.service -n 80 --no-pager >&2
+    echo "当前 IPv6 路由：" >&2
+    ip -6 route >&2 || true
     exit 1
   fi
   if ! ip -6 route show default | grep -q 'default via .* dev he-ipv6'; then

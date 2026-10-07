@@ -4,11 +4,13 @@
 
 ### 一键部署
 
+运行：
+
 ```sh
-curl -fsSL https://raw.githubusercontent.com/qza1314523/v6/main/install.sh | sudo bash
+curl -fsSL "https://raw.githubusercontent.com/qza1314523/v6/main/install.sh?$(date +%s)" | sudo bash
 ```
 
-安装程序会自动安装依赖、编译程序、创建 HE 6in4 隧道和代理服务，并询问 HE 参数与代理端口。公网 IPv4 自动检测，多地址时选择序号；隧道 IPv6 自动生成，MTU 固定为 `1480`。启动后会通过两个代理端口请求 `https://api.ipify.org`，显示出口 IP 和测试结果。
+安装器会先配置并验证 HE 隧道，再启动代理。如果隧道启动失败，会打印 `he-ipv6.service` 的详细日志和当前 IPv6 路由；不会继续启动代理。公网 IPv4 自动检测，多地址时选择序号；隧道 IPv6 自动生成，MTU 固定为 `1480`。
 
 ### 管理菜单
 
@@ -42,10 +44,10 @@ ip -6 route
 ### One-command deployment
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/qza1314523/v6/main/install.sh | sudo bash
+curl -fsSL "https://raw.githubusercontent.com/qza1314523/v6/main/install.sh?$(date +%s)" | sudo bash
 ```
 
-The installer installs dependencies, builds the binary, creates the HE 6in4 tunnel and proxy services, and asks for the HE parameters and proxy ports. The public IPv4 is detected automatically; multiple addresses are shown as a numbered list. The tunnel IPv6 is derived automatically and MTU is fixed at `1480`. After startup, both proxy ports are tested through `https://api.ipify.org` and their egress IPs are printed.
+The installer configures and validates the HE tunnel before starting the proxy. If the tunnel fails, it prints the service logs and current IPv6 routes instead of continuing with a broken proxy.
 
 ### Management menu
 
