@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/surfmore/v6/internal/config"
@@ -34,18 +37,35 @@ func main() {
 	randomIPv6Proxy := proxy.NewProxyServer(cfg, true)
 	realIPv4Proxy := proxy.NewProxyServer(cfg, false)
 
-	server := &http.Server{Addr: fmt.Sprintf("%s:%d", cfg.Bind, cfg.RealIPv4Port), Handler: realIPv4Proxy, ReadHeaderTimeout: 15 * time.Second}
-	go func() {
-		log.Printf("Starting random IPv6 proxy server on %s:%d", cfg.Bind, cfg.RandomIPv6Port)
-		err := http.ListenAndServe(fmt.Sprintf("%s:%d", cfg.Bind, cfg.RandomIPv6Port), randomIPv6Proxy)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}()
+	randomAddr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.RandomIPv6Port)
+	realAddr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.RealIPv4Port)
+	randomServer := &http.Server{Addr: randomAddr, Handler: randomIPv6Proxy, ReadHeaderTimeout: 15 * time.Second}
+	realServer := &http.Server{Addr: realAddr, Handler: realIPv4Proxy, ReadHeaderTimeout: 15 * time.Second}
 
-	log.Printf("Starting real IPv4 proxy server on %s:%d", cfg.Bind, cfg.RealIPv4Port)
-	err := server.ListenAndServe()
-	if err != nil {
-		log.Fatal(err)
+	serverErrors := make(chan error, 2)
+	go serve(randomServer, "random IPv6", serverErrors)
+	go serve(realServer, "real IPv4", serverErrors)
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case sig := <-stop:
+		log.Printf("Received %s, shutting down", sig)
+	case err := <-serverErrors:
+		if err != nil {
+			log.Printf("Proxy server stopped: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = randomServer.Shutdown(ctx)
+	_ = realServer.Shutdown(ctx)
+}
+
+func serve(server *http.Server, name string, errors chan<- error) {
+	log.Printf("Starting %s proxy server on %s", name, server.Addr)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		errors <- err
 	}
 }

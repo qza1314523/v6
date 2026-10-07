@@ -252,43 +252,88 @@ PROXY_ENV_FILE="$PROXY_ENV_FILE"
 SRC_DIR="$INSTALL_DIR/src"
 BIN="$INSTALL_DIR/bin/ipv6proxy"
 
+pause() { read -r -p "按 Enter 返回菜单..." _ < /dev/tty || true; }
+
+service_state() {
+  local unit="$1"
+  printf '%-22s active=%-10s enabled=%s\\n' "\$unit" "\$(systemctl is-active "\$unit" 2>/dev/null || true)" "\$(systemctl is-enabled "\$unit" 2>/dev/null || true)"
+}
+
+show_status() {
+  service_state he-ipv6.service
+  service_state ipv6proxy.service
+  echo "监听端口:"
+  ss -lntup | grep -E ':(\${IPV6_PROXY_RANDOM_PORT:-100}|\${IPV6_PROXY_REAL_PORT:-101})([[:space:]]|$)' || echo "  未发现代理监听"
+  echo "IPv6 路由:"
+  ip -6 route show default || true
+}
+
+diagnose() {
+  echo "== 服务状态 =="
+  show_status
+  echo "== 隧道 =="
+  ip tunnel show "\$(awk -F= '/^HE_TUNNEL_NAME=/{print \$2}' "\$HE_ENV_FILE")" 2>/dev/null || true
+  echo "== 最近日志 =="
+  journalctl -u he-ipv6.service -u ipv6proxy.service -n 30 --no-pager
+}
+
 test_proxy() {
   source "\$PROXY_ENV_FILE"
-  for port in "\$IPV6_PROXY_RANDOM_PORT" "\$IPV6_PROXY_REAL_PORT"; do
-    if ipaddr=\$(curl --silent --show-error --max-time 20 --proxy "http://127.0.0.1:\$port" https://api.ipify.org); then
-      echo "端口 \$port 成功，出口 IP: \$ipaddr"
+  local failed=0 ipaddr
+  for spec in "\$IPV6_PROXY_RANDOM_PORT https://api64.ipify.org IPv6" "\$IPV6_PROXY_REAL_PORT https://api.ipify.org IPv4"; do
+    read -r port url label <<< "\$spec"
+    if ipaddr=\$(curl --silent --show-error --fail --max-time 20 --proxy "http://127.0.0.1:\$port" "\$url"); then
+      printf '%s 端口 %s 成功，出口 IP: %s\\n' "\$label" "\$port" "\$ipaddr"
     else
-      echo "端口 \$port 失败"
+      printf '%s 端口 %s 失败\\n' "\$label" "\$port" >&2
+      failed=1
     fi
   done
+  return "\$failed"
+}
+
+start_services() {
+  systemctl start he-ipv6.service
+  ip -6 route show default | grep -q 'dev he-ipv6' || { echo "HE 默认 IPv6 路由未建立" >&2; journalctl -u he-ipv6.service -n 50 --no-pager >&2; return 1; }
+  systemctl start ipv6proxy.service
+  systemctl is-active --quiet ipv6proxy.service
+}
+
+update_binary() {
+  git -C "\$SRC_DIR" fetch --depth 1 origin main
+  git -C "\$SRC_DIR" reset --hard origin/main
+  (cd "\$SRC_DIR" && go test ./... && go vet ./... && go build -trimpath -ldflags='-s -w' -o "\$BIN" ./cmd/ipv6proxy)
+  systemctl restart ipv6proxy.service
 }
 
 while true; do
   echo
   echo "IPv6 Proxy 管理菜单"
-  echo "1) 修改配置"
-  echo "2) 启动服务"
-  echo "3) 停止服务"
-  echo "4) 重启服务"
-  echo "5) 设置开机自启动"
-  echo "6) 取消开机自启动"
-  echo "7) 更新程序"
-  echo "8) 测试代理出口 IP"
-  echo "9) 查看状态"
+  echo "1) 查看运行状态"
+  echo "2) 运行完整诊断"
+  echo "3) 测试 IPv4/IPv6 代理出口"
+  echo "4) 启动服务"
+  echo "5) 重启服务"
+  echo "6) 停止服务"
+  echo "7) 设置开机自启动"
+  echo "8) 取消开机自启动"
+  echo "9) 编辑配置"
+  echo "10) 更新程序并重建"
   echo "0) 退出"
-  read -r -p "请选择: " choice < /dev/tty
+  read -r -p "请选择 [0-10]: " choice < /dev/tty
   case "\$choice" in
-    1) "\${EDITOR:-nano}" "\$HE_ENV_FILE"; "\${EDITOR:-nano}" "\$PROXY_ENV_FILE"; systemctl daemon-reload ;;
-    2) systemctl enable --now he-ipv6.service ipv6proxy.service ;;
-    3) systemctl stop ipv6proxy.service he-ipv6.service ;;
-    4) systemctl restart he-ipv6.service ipv6proxy.service ;;
-    5) systemctl enable he-ipv6.service ipv6proxy.service ;;
-    6) systemctl disable he-ipv6.service ipv6proxy.service ;;
-    7) git -C "\$SRC_DIR" fetch --depth 1 origin main && git -C "\$SRC_DIR" reset --hard origin/main && (cd "\$SRC_DIR" && go build -trimpath -ldflags='-s -w' -o "\$BIN" ./cmd/ipv6proxy) && systemctl restart ipv6proxy.service ;;
-    8) test_proxy ;;
-    9) systemctl --no-pager status he-ipv6.service ipv6proxy.service ;;
+    1) show_status; pause ;;
+    2) diagnose; pause ;;
+    3) test_proxy; pause ;;
+    4) start_services; pause ;;
+    5) systemctl restart he-ipv6.service && start_services; pause ;;
+    6) systemctl stop ipv6proxy.service he-ipv6.service; pause ;;
+    7) systemctl enable he-ipv6.service ipv6proxy.service; pause ;;
+    8) systemctl disable he-ipv6.service ipv6proxy.service; pause ;;
+    9) "\${EDITOR:-nano}" "\$HE_ENV_FILE"; "\${EDITOR:-nano}" "\$PROXY_ENV_FILE"; systemctl daemon-reload; pause ;;
+    10) update_binary; pause ;;
     0) exit 0 ;;
-    *) echo "无效选项" ;;
+    *) echo "无效选项，请输入 0-10" ;;
   esac
 done
 EOF
