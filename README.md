@@ -8,7 +8,7 @@
 
 - Linux，Go 1.21 或更新版本
 - HE Tunnelbroker 账号提供的 6in4 参数，或已经建立好的 IPv6 网络
-- 对随机 IPv6 源地址进行非本地绑定时，需要 root/capability 和 `net.ipv6.ip_nonlocal_bind=1`
+- 安装时需要输入 HE 服务端 IPv4、HE 服务端 IPv6 网关和 HE 路由前缀；本机公网 IPv4 自动检测，多地址时选择序号；本机隧道 IPv6 自动生成，MTU 固定为 1480
 - Linux 内核启用 `sit`/6in4 支持；云主机还必须允许协议号 41（IPv6-in-IPv4）
 
 ## Build and run

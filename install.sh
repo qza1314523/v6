@@ -105,15 +105,62 @@ prompt_optional() {
   printf -v "$name" '%s' "${value:-$default}"
 }
 
+get_public_ipv4s() {
+  ip -4 -o addr show scope global | awk '{split($4, a, "/"); print a[1]}' | while read -r address; do
+    case "$address" in
+      10.*|192.168.*|127.*|169.254.*|172.16.*|172.17.*|172.18.*|172.19.*|172.2[0-9].*|172.3[0-1].*|100.6[4-9].*|100.[7-9][0-9].*|100.1[0-1][0-9].*|100.12[0-7].*) ;;
+      *) printf '%s\n' "$address" ;;
+    esac
+  done
+}
+
+select_local_ipv4() {
+  local candidates choice count=0
+  mapfile -t candidates < <(get_public_ipv4s)
+  for address in "${candidates[@]}"; do
+    [[ -n "$address" ]] && printf '  %d) %s\n' "$((++count))" "$address" >&2
+  done
+  if ((count == 0)); then
+    echo "未检测到公网 IPv4，请检查网卡后重试。" >&2
+    exit 1
+  elif ((count == 1)); then
+    LOCAL_IPV4="${candidates[0]}"
+    echo "自动选择本机 IPv4: $LOCAL_IPV4" >&2
+    return
+  fi
+  while true; do
+    printf '请选择本机 IPv4 序号 [1-%d]: ' "$count" >&2
+    IFS= read -r choice < /dev/tty || exit 1
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= count)); then
+      LOCAL_IPV4="${candidates[$((choice - 1))]}"
+      return
+    fi
+    echo "请输入有效序号。" >&2
+  done
+}
+
+derive_local_ipv6() {
+  local gateway="$1"
+  gateway="${gateway%%/*}"
+  if [[ "$gateway" =~ ::1$ ]]; then
+    printf '%s/64\n' "${gateway%::1}::2"
+  else
+    echo "HE 服务端 IPv6 网关不是常见的 ::1 格式，无法安全自动生成本机地址。" >&2
+    echo "请使用 HE 控制台提供的本机隧道地址重新执行。" >&2
+    exit 1
+  fi
+}
+
 echo
- echo "=== HE 6in4 隧道配置 ==="
- echo "请填写 HE Tunnelbroker 控制台显示的参数。"
+echo "=== HE 6in4 隧道配置 ==="
+ echo "HE Tunnelbroker 参数：输入 HE 服务端 IPv4、HE 服务端 IPv6 网关和 HE 路由前缀；本机公网 IPv4 会自动检测/选择，本机隧道 IPv6 自动由网关生成，MTU 固定为 1480。"
 prompt_required HE_SERVER_IPV4 "HE 服务端 IPv4"
-prompt_required LOCAL_IPV4 "本机 IPv4"
 prompt_required HE_SERVER_IPV6 "HE 服务端 IPv6 网关"
-prompt_required LOCAL_IPV6 "本机隧道 IPv6（含前缀，例如 2001:db8:1::2/64）"
+select_local_ipv4
+LOCAL_IPV6="$(derive_local_ipv6 "$HE_SERVER_IPV6")"
+echo "自动生成本机隧道 IPv6: $LOCAL_IPV6" >&2
 prompt_required HE_ROUTED_PREFIX "HE 路由前缀（例如 2001:db8:2::/64）"
-prompt_optional HE_MTU "隧道 MTU" "1480"
+HE_MTU=1480
 
 cat > "$HE_ENV_FILE" <<EOF
 HE_SERVER_IPV4=$HE_SERVER_IPV4
