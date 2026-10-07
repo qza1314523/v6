@@ -87,18 +87,57 @@ ip tunnel del "$HE_TUNNEL_NAME" 2>/dev/null || true
 EOF
 chmod 0755 /usr/local/sbin/he-ipv6-up /usr/local/sbin/he-ipv6-down
 
-if [[ ! -f "$HE_ENV_FILE" ]]; then
-  cat > "$HE_ENV_FILE" <<'EOF'
-# HE tunnel endpoint and local tunnel address.
-HE_SERVER_IPV4=
-LOCAL_IPV4=
-HE_SERVER_IPV6=
-LOCAL_IPV6=
-HE_ROUTED_PREFIX=
+prompt_required() {
+  local name="$1" label="$2" default="${3:-}" value
+  while true; do
+    if [[ -n "$default" ]]; then printf "%s [%s]: " "$label" "$default" >&2; else printf "%s: " "$label" >&2; fi
+    IFS= read -r value < /dev/tty || { echo "无法读取终端输入" >&2; exit 1; }
+    value="${value:-$default}"
+    if [[ -n "$value" ]]; then printf -v "$name" '%s' "$value"; return; fi
+    echo "该项不能为空" >&2
+  done
+}
+
+prompt_optional() {
+  local name="$1" label="$2" default="$3" value
+  printf "%s [%s]: " "$label" "$default" >&2
+  IFS= read -r value < /dev/tty || { echo "无法读取终端输入" >&2; exit 1; }
+  printf -v "$name" '%s' "${value:-$default}"
+}
+
+echo
+ echo "=== HE 6in4 隧道配置 ==="
+ echo "请填写 HE Tunnelbroker 控制台显示的参数。"
+prompt_required HE_SERVER_IPV4 "HE 服务端 IPv4"
+prompt_required LOCAL_IPV4 "本机 IPv4"
+prompt_required HE_SERVER_IPV6 "HE 服务端 IPv6 网关"
+prompt_required LOCAL_IPV6 "本机隧道 IPv6（含前缀，例如 2001:db8:1::2/64）"
+prompt_required HE_ROUTED_PREFIX "HE 路由前缀（例如 2001:db8:2::/64）"
+prompt_optional HE_MTU "隧道 MTU" "1480"
+
+cat > "$HE_ENV_FILE" <<EOF
+HE_SERVER_IPV4=$HE_SERVER_IPV4
+LOCAL_IPV4=$LOCAL_IPV4
+HE_SERVER_IPV6=$HE_SERVER_IPV6
+LOCAL_IPV6=$LOCAL_IPV6
+HE_ROUTED_PREFIX=$HE_ROUTED_PREFIX
 HE_TUNNEL_NAME=he-ipv6
-HE_MTU=1480
+HE_MTU=$HE_MTU
 EOF
-fi
+
+echo
+ echo "=== 代理配置 ==="
+prompt_optional IPV6_PROXY_CIDR "随机 IPv6 源地址前缀" "$HE_ROUTED_PREFIX"
+prompt_required IPV6_PROXY_REAL_IPV4 "IPv4 出站地址" "$LOCAL_IPV4"
+prompt_optional IPV6_PROXY_RANDOM_PORT "随机 IPv6 代理端口" "100"
+prompt_optional IPV6_PROXY_REAL_PORT "IPv4 代理端口" "101"
+
+cat > "$PROXY_ENV_FILE" <<EOF
+IPV6_PROXY_CIDR=$IPV6_PROXY_CIDR
+IPV6_PROXY_REAL_IPV4=$IPV6_PROXY_REAL_IPV4
+IPV6_PROXY_RANDOM_PORT=$IPV6_PROXY_RANDOM_PORT
+IPV6_PROXY_REAL_PORT=$IPV6_PROXY_REAL_PORT
+EOF
 
 cat > "$PROXY_SERVICE" <<EOF
 [Unit]
@@ -123,18 +162,16 @@ ReadWritePaths=$INSTALL_DIR
 WantedBy=multi-user.target
 EOF
 
-if [[ ! -f "$PROXY_ENV_FILE" ]]; then
-  cat > "$PROXY_ENV_FILE" <<'EOF'
-IPV6_PROXY_CIDR=
-IPV6_PROXY_REAL_IPV4=
-IPV6_PROXY_RANDOM_PORT=100
-IPV6_PROXY_REAL_PORT=101
-EOF
-fi
-
 systemctl daemon-reload
-echo "已安装 HE 6in4 隧道和代理。"
-echo "1. 编辑 $HE_ENV_FILE，填写 HE 参数"
-echo "2. 编辑 $PROXY_ENV_FILE，填写代理参数"
-echo "3. 验证: systemctl start he-ipv6 && ping -6 -c 3 2606:4700:4700::1111"
-echo "4. 启动: systemctl enable --now ipv6proxy"
+echo
+echo "配置已写入 $HE_ENV_FILE 和 $PROXY_ENV_FILE"
+printf "现在启动 HE 隧道和代理服务？[Y/n]: " >&2
+IFS= read -r START_NOW < /dev/tty || exit 1
+if [[ ! "$START_NOW" =~ ^[Nn]$ ]]; then
+  systemctl enable he-ipv6.service ipv6proxy.service
+  systemctl start he-ipv6.service
+  systemctl start ipv6proxy.service
+  echo "HE 隧道和代理已启动。"
+else
+  echo "已跳过启动。稍后执行: systemctl enable --now ipv6proxy"
+fi

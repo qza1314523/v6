@@ -58,7 +58,7 @@ On a fresh Debian/Ubuntu server, run:
 curl -fsSL https://raw.githubusercontent.com/qza1314523/v6/main/install.sh | sudo bash
 ```
 
-The installer installs missing Debian/Ubuntu packages (`git`, `iproute2`, `systemd`, `golang-go`, and `build-essential`) before cloning and building the project. After it finishes, fill in the HE values and proxy values:
+The installer installs missing Debian/Ubuntu packages (`git`, `iproute2`, `systemd`, `golang-go`, and `build-essential`), asks for the HE and proxy settings in the current terminal, writes both configuration files, and offers to start both services.
 
 ```sh
 sudoedit /etc/default/he-ipv6
