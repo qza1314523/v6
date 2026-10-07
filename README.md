@@ -50,6 +50,31 @@ sudo ./ipv6proxy \
 
 Automatic route/sysctl changes need root privileges. Pass `-auto-route=false -auto-forwarding=false -auto-ip-nonlocal-bind=false` when managing networking separately. These system-level changes are not automatically reverted at shutdown.
 
+## One-command deployment
+
+On a fresh Debian/Ubuntu server, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/qza1314523/v6/main/install.sh | sudo bash
+```
+
+The command installs the binary and systemd units. It does not guess or create HE credentials. After it finishes, fill in the HE values and proxy values:
+
+```sh
+sudoedit /etc/default/he-ipv6
+sudoedit /etc/default/ipv6proxy
+sudo systemctl enable --now he-ipv6
+sudo systemctl enable --now ipv6proxy
+```
+
+To review the script before running it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/qza1314523/v6/main/install.sh -o install.sh
+less install.sh
+sudo bash install.sh
+```
+
 ## Install HE 6in4 tunnel and proxy
 
 The installer creates two systemd units:
