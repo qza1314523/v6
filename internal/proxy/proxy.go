@@ -1,54 +1,57 @@
 package proxy
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
+	"math/big"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/elazarl/goproxy"
-	"github.com/qza666/v6/internal/config"
+	"github.com/surfmore/v6/internal/config"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 func generateRandomIPv6(cidr string) (net.IP, error) {
-	_, ipNet, err := net.ParseCIDR(cidr)
-	if err != nil {
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil || network.IP.To4() != nil {
+		if err == nil {
+			err = fmt.Errorf("CIDR is not IPv6")
+		}
 		return nil, err
 	}
-
-	ip := make(net.IP, net.IPv6len)
-	copy(ip, ipNet.IP)
-
-	for i := 0; i < net.IPv6len; i++ {
-		if i >= len(ipNet.Mask) || ipNet.Mask[i] != 0xff {
-			ip[i] = byte(rand.Intn(256))
+	ip := append(net.IP(nil), network.IP.To16()...)
+	for i := range ip {
+		for bit := byte(0); bit < 8; bit++ {
+			if network.Mask[i]&(1<<(7-bit)) == 0 {
+				if randomBit, err := rand.Int(rand.Reader, big.NewInt(2)); err != nil {
+					return nil, err
+				} else if randomBit.Int64() == 1 {
+					ip[i] |= 1 << (7 - bit)
+				} else {
+					ip[i] &^= 1 << (7 - bit)
+				}
+			}
 		}
 	}
-
 	return ip, nil
 }
 
 func getIPv6Address(domain string) (string, error) {
-	ips, err := net.LookupIP(domain)
+	ips, err := net.DefaultResolver.LookupIP(context.Background(), "ip6", domain)
 	if err != nil {
 		return "", err
 	}
-
 	for _, ip := range ips {
 		if ip.To4() == nil {
 			return ip.String(), nil
 		}
 	}
-
 	return "", fmt.Errorf("no IPv6 address found for %s", domain)
 }
 
@@ -56,148 +59,79 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = cfg.Verbose
 
-	proxy.OnRequest().DoFunc(
-		func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-			if !checkAuth(cfg.AuthConfig.Username, cfg.AuthConfig.Password, req) {
-				return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusProxyAuthRequired, "Proxy Authentication Required")
-			}
-			return req, nil
-		},
-	)
-
-	proxy.OnRequest().HijackConnect(
-		func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
-			if !checkAuth(cfg.AuthConfig.Username, cfg.AuthConfig.Password, req) {
-				client.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Proxy\"\r\n\r\n"))
-				client.Close()
-				return
-			}
-
-			host := req.URL.Hostname()
-			var outgoingIP net.IP
-			var targetIP string
-			var err error
-
-			if useRandomIPv6 {
-				targetIP, err = getIPv6Address(host)
-				if err != nil {
-					log.Printf("Get IPv6 address error: %v", err)
-					client.Write([]byte(fmt.Sprintf("%s 500 Internal Server Error\r\n\r\n", req.Proto)))
-					client.Close()
-					return
-				}
-
-				outgoingIP, err = generateRandomIPv6(cfg.CIDR)
-				if err != nil {
-					log.Printf("Generate random IPv6 error: %v", err)
-					client.Write([]byte(fmt.Sprintf("%s 500 Internal Server Error\r\n\r\n", req.Proto)))
-					client.Close()
-					return
-				}
-
-				log.Printf("CONNECT: %s [%s] from %s", req.URL.Host, targetIP, outgoingIP.String())
-			} else {
-				outgoingIP = net.ParseIP(cfg.RealIPv4)
-				log.Printf("CONNECT: %s from real IPv4 %s", req.URL.Host, outgoingIP.String())
-			}
-
-			dialer := &net.Dialer{
-				LocalAddr: &net.TCPAddr{IP: outgoingIP, Port: 0},
-				Timeout:   30 * time.Second,
-			}
-
-			server, err := dialer.Dial("tcp", req.URL.Host)
-			if err != nil {
-				log.Printf("Failed to connect to %s from %s: %v", req.URL.Host, outgoingIP.String(), err)
-				client.Write([]byte(fmt.Sprintf("%s 500 Internal Server Error\r\n\r\n", req.Proto)))
-				client.Close()
-				return
-			}
-
-			client.Write([]byte(fmt.Sprintf("%s 200 Connection established\r\n\r\n", req.Proto)))
-
-			go copyData(client, server)
-			go copyData(server, client)
-		},
-	)
-
-	proxy.OnRequest().DoFunc(
-		func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-			host := req.URL.Hostname()
-			var outgoingIP net.IP
-			var targetIP string
-			var err error
-
-			if useRandomIPv6 {
-				targetIP, err = getIPv6Address(host)
-				if err != nil {
-					log.Printf("Get IPv6 address error: %v", err)
-					return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusBadGateway, "Failed to resolve host")
-				}
-
-				outgoingIP, err = generateRandomIPv6(cfg.CIDR)
-				if err != nil {
-					log.Printf("Generate random IPv6 error: %v", err)
-					return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusInternalServerError, "Failed to generate IPv6 address")
-				}
-
-				log.Printf("HTTP: %s [%s] from %s", req.URL.Host, targetIP, outgoingIP.String())
-			} else {
-				outgoingIP = net.ParseIP(cfg.RealIPv4)
-				log.Printf("HTTP: %s from real IPv4 %s", req.URL.Host, outgoingIP.String())
-			}
-
-			dialer := &net.Dialer{
-				LocalAddr: &net.TCPAddr{IP: outgoingIP, Port: 0},
-				Timeout:   30 * time.Second,
-			}
-
-			transport := &http.Transport{
-				Dial:        dialer.Dial,
-				DialContext: dialer.DialContext,
-			}
-
-			ctx.RoundTripper = goproxy.RoundTripperFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Response, error) {
-				return transport.RoundTrip(req)
-			})
-
-			return req, nil
-		},
-	)
-
+	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		if !checkAuth(cfg.AuthConfig.Username, cfg.AuthConfig.Password, req) {
+			return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusProxyAuthRequired, "Proxy Authentication Required")
+		}
+		outgoingIP, err := selectOutgoingIP(cfg, useRandomIPv6)
+		if err != nil {
+			return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusBadGateway, err.Error())
+		}
+		log.Printf("HTTP: %s from %s", req.URL.Host, outgoingIP)
+		transport := newTransport(outgoingIP)
+		ctx.RoundTripper = goproxy.RoundTripperFunc(func(request *http.Request, _ *goproxy.ProxyCtx) (*http.Response, error) {
+			return transport.RoundTrip(request)
+		})
+		return req, nil
+	})
+	proxy.OnRequest().HijackConnect(func(req *http.Request, client net.Conn, _ *goproxy.ProxyCtx) {
+		if !checkAuth(cfg.AuthConfig.Username, cfg.AuthConfig.Password, req) {
+			_, _ = io.WriteString(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Proxy\"\r\n\r\n")
+			_ = client.Close()
+			return
+		}
+		outgoingIP, err := selectOutgoingIP(cfg, useRandomIPv6)
+		if err != nil {
+			writeProxyError(client, req, err)
+			return
+		}
+		server, err := (&net.Dialer{Timeout: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: outgoingIP}}).Dial("tcp", req.URL.Host)
+		if err != nil {
+			writeProxyError(client, req, err)
+			return
+		}
+		_, _ = io.WriteString(client, fmt.Sprintf("%s 200 Connection established\r\n\r\n", req.Proto))
+		go copyData(client, server)
+		go copyData(server, client)
+	})
 	return proxy
 }
 
-func checkAuth(username string, password string, req *http.Request) bool {
-	if username == "" || password == "" {
+func newTransport(localIP net.IP) *http.Transport {
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: localIP}}
+	return &http.Transport{Proxy: nil, DialContext: dialer.DialContext, MaxIdleConns: 64, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, ExpectContinueTimeout: 1 * time.Second}
+}
+
+func selectOutgoingIP(cfg *config.Config, random bool) (net.IP, error) {
+	if random {
+		return generateRandomIPv6(cfg.CIDR)
+	}
+	ip := net.ParseIP(cfg.RealIPv4).To4()
+	if ip == nil {
+		return nil, fmt.Errorf("invalid configured IPv4 address")
+	}
+	return ip, nil
+}
+
+func writeProxyError(client net.Conn, req *http.Request, err error) {
+	_, _ = io.WriteString(client, fmt.Sprintf("%s 502 Bad Gateway\r\n\r\n%s", req.Proto, err))
+	_ = client.Close()
+}
+
+func checkAuth(username, password string, req *http.Request) bool {
+	if username == "" && password == "" {
 		return true
 	}
-
-	auth := req.Header.Get("Proxy-Authorization")
-	if auth == "" {
+	value := req.Header.Get("Proxy-Authorization")
+	if !strings.HasPrefix(value, "Basic ") {
 		return false
 	}
-
-	const prefix = "Basic "
-	if !strings.HasPrefix(auth, prefix) {
-		return false
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(value, "Basic ")))
 	if err != nil {
 		return false
 	}
-
 	credentials := strings.SplitN(string(decoded), ":", 2)
-	if len(credentials) != 2 {
-		return false
-	}
-
-	return credentials[0] == username && credentials[1] == password
+	return len(credentials) == 2 && credentials[0] == username && credentials[1] == password
 }
 
-func copyData(dst, src net.Conn) {
-	defer dst.Close()
-	defer src.Close()
-	io.Copy(dst, src)
-}
+func copyData(dst, src net.Conn) { defer dst.Close(); defer src.Close(); _, _ = io.Copy(dst, src) }

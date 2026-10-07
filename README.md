@@ -1,125 +1,79 @@
-![image](https://github.com/user-attachments/assets/6c9ca3d0-27ff-44fd-bd04-e8aad02bc8f0)
-# ipv6完全屏蔽ipv4的检测，每次请求都是随机的ipv6，如需ipv4代理，请使用101端口。完全傻瓜式的一键安装
+# IPv6 Egress Proxy
 
-# HE IPv6 隧道与 IPv6 代理配置脚本
+基于 HE IPv6 前缀提供两种 HTTP/HTTPS 正向代理入口：端口 `100` 使用前缀内随机 IPv6 源地址，端口 `101` 使用指定的本机 IPv4 源地址。项目只负责代理，不会代替你建立 HE 隧道或自动配置云服务商网络。
 
-这个脚本用于配置 HE（Hurricane Electric）IPv6 隧道以及一个基于 Go 语言的 IPv6 代理服务。它包括从安装必备工具、配置 IPv6 隧道到创建并启用 IPv6 代理服务的完整步骤。
+> 使用前确认你拥有该 IPv6 前缀，且已按系统/云平台要求完成路由、NDP/邻居发现和防火墙配置。代理默认监听 `0.0.0.0`，生产环境请限制来源 IP，并启用认证。
 
-## 功能
+## Requirements
 
-- **自动配置 HE IPv6 隧道**：通过指定 HE 服务器的 IPv4 和 IPv6 地址，以及本地网络的 IPv4 地址来配置隧道。
-- **安装 Go 环境**：如果本地没有安装 Go 语言环境，脚本会自动安装指定版本的 Go（目前为 1.18）。
-- **创建并配置 IPv6 代理服务**：安装并启动一个 IPv6 代理服务，该服务通过 HE 隧道将请求转发到实际的 IPv4 地址。
+- Linux，Go 1.21 或更新版本
+- 可用的 IPv6 前缀及 IPv6 出站路由
+- 对随机 IPv6 源地址进行非本地绑定时，需要 root/capability 和 `net.ipv6.ip_nonlocal_bind=1`
 
-## 系统要求
+## Build and run
 
-- **操作系统**：基于 Debian/Ubuntu 的 Linux 系统（推荐Ubuntu 18）
-- **系统内存**：至少 512 MB 可用内存
-- **root 权限**：需要以 root 用户运行
-
-## 使用说明
-
-### 1. 下载并运行脚本
-
-```bash
-git clone https://github.com/qza666/v6.git
+```sh
+git clone https://github.com/surfmore/v6.git
 cd v6
-chmod +x install.sh
+go test ./...
+go build -o ipv6proxy ./cmd/ipv6proxy
+sudo ./ipv6proxy \
+  -cidr 2001:db8:1234::/48 \
+  -real-ipv4 192.0.2.10 \
+  -bind 0.0.0.0 \
+  -username proxyuser \
+  -password 'replace-with-a-strong-password'
+```
+
+代理地址：
+
+- `http://<server-ip>:100`：每次新建上游连接时从配置的 IPv6 前缀生成源地址
+- `http://<server-ip>:101`：从 `-real-ipv4` 地址发起上游连接
+
+客户端需支持 HTTP CONNECT。Basic 认证通过 `-username` 和 `-password` 同时启用；未配置时代理不做认证，不要将其暴露到公网。
+
+## Options
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-cidr` | required | IPv6 network used as random egress source |
+| `-real-ipv4` | required | Local IPv4 source address |
+| `-random-ipv6-port` | `100` | Random IPv6 proxy listen port |
+| `-real-ipv4-port` | `101` | IPv4 proxy listen port |
+| `-bind` | `0.0.0.0` | Listen address; restrict with firewall or bind to a private interface |
+| `-username` / `-password` | empty | Enable Basic proxy authentication by supplying both |
+| `-auto-route` | `true` | Add a local route for the configured IPv6 CIDR |
+| `-auto-forwarding` | `true` | Enable IPv6 forwarding using sysctl |
+| `-auto-ip-nonlocal-bind` | `true` | Enable non-local IPv6 binding using sysctl |
+| `-verbose` | `false` | Enable goproxy request logging |
+
+Automatic route/sysctl changes need root privileges. Pass `-auto-route=false -auto-forwarding=false -auto-ip-nonlocal-bind=false` when managing networking separately. These system-level changes are not automatically reverted at shutdown.
+
+## Install as a service
+
+On Debian/Ubuntu, run from the cloned repository:
+
+```sh
 sudo ./install.sh
+sudoedit /etc/default/ipv6proxy
 ```
 
-### 2. 配置 HE IPv6 隧道
+Set `IPV6_PROXY_CIDR` and `IPV6_PROXY_REAL_IPV4`, then start the service:
 
-脚本会要求您提供以下信息来配置 HE IPv6 隧道：
-
-- **HE 服务器的 IPv4 地址**
-- **本地机器的 IPv4 地址**
-- **HE 服务器的 IPv6 地址（包括前缀长度）**
-- **HE 分配的 IPv6 前缀（可以是/48）**
-
-### 3. 启动 IPv6 代理服务
-
-配置完成后，您将可以启动 IPv6 代理服务：
-
-```bash
-systemctl start ipv6proxy
+```sh
+sudo systemctl enable --now ipv6proxy
+sudo systemctl status ipv6proxy
+sudo journalctl -u ipv6proxy -f
 ```
 
-要设置服务开机自启：
+The installer builds `/opt/ipv6proxy/bin/ipv6proxy`. It does not create an HE tunnel, alter `/etc/network/interfaces`, or open firewall ports. Configure those for your environment before enabling the service.
 
-```bash
-systemctl enable ipv6proxy
+## Development
+
+```sh
+gofmt -w ./cmd ./internal
+go test ./...
+go vet ./...
 ```
 
-### 4. 查看服务状态
-
-您可以随时查看 IPv6 代理服务的状态：
-
-```bash
-systemctl status ipv6proxy
-```
-
-查看服务日志：
-
-```bash
-journalctl -u ipv6proxy -f
-```
-
-### 5. 手动测试代理
-
-如果您需要手动测试代理，可以在 `/root/v6` 目录下执行以下命令：
-
-```bash
-go run cmd/ipv6proxy/main.go -cidr <IPv6_CIDR> -real-ipv4 <Real_IPv4>
-```
-
-### 6. 停止服务
-
-如果需要停止 IPv6 代理服务，可以使用：
-
-```bash
-systemctl stop ipv6proxy
-```
-
-### 配置文件位置
-
-- 隧道配置文件：`/etc/he-ipv6/he-ipv6.conf`
-- IPv6 代理服务配置文件：`/etc/systemd/system/ipv6proxy.service`
-
-## 配置文件说明
-
-在脚本运行时，以下配置信息会保存在配置文件中：
-
-- **HE 服务器 IPv4 地址**
-- **HE 服务器 IPv6 地址**
-- **本地 IPv4 地址**
-- **本地 IPv6 地址**
-- **HE 分配的 IPv6 前缀**
-
-## 安装日志
-
-安装过程中生成的日志文件存储在：
-
-```
-/tmp/he-ipv6-setup/install.log
-```
-
-## 常见问题
-
-### Q1: 脚本提示安装失败怎么办？
-
-- 确保系统已连接到互联网，并且具有足够的系统内存（至少 512 MB）。
-- 检查安装日志以获取详细错误信息。
-
-### Q2: 如何修改配置？
-
-如果需要修改配置文件，请编辑相应的配置文件，然后重新启动服务：
-
-```bash
-systemctl daemon-reload
-systemctl restart ipv6proxy
-```
-
-## 支持与反馈
-
-如果您遇到任何问题，或者有任何建议，请查看日志文件，或者直接联系项目维护者。
+CI runs tests and vet for pushes and pull requests.

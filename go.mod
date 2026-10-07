@@ -1,6 +1,6 @@
-module github.com/qza666/v6
+module github.com/surfmore/v6
 
-go 1.18
+go 1.21
 
 require (
 	github.com/elazarl/goproxy v1.5.0

@@ -5,21 +5,18 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
-	"github.com/qza666/v6/internal/config"
-	"github.com/qza666/v6/internal/proxy"
-	"github.com/qza666/v6/internal/sysutils"
+	"github.com/surfmore/v6/internal/config"
+	"github.com/surfmore/v6/internal/proxy"
+	"github.com/surfmore/v6/internal/sysutils"
 )
 
 func main() {
 	log.SetOutput(os.Stdout)
 	cfg := config.ParseFlags()
-	if cfg.CIDR == "" {
-		log.Fatal("CIDR is required")
-	}
-
-	if cfg.RealIPv4 == "" {
-		log.Fatal("Real IPv4 address is required")
+	if err := cfg.Validate(); err != nil {
+		log.Fatal(err)
 	}
 
 	if cfg.AutoForwarding {
@@ -37,6 +34,7 @@ func main() {
 	randomIPv6Proxy := proxy.NewProxyServer(cfg, true)
 	realIPv4Proxy := proxy.NewProxyServer(cfg, false)
 
+	server := &http.Server{Addr: fmt.Sprintf("%s:%d", cfg.Bind, cfg.RealIPv4Port), Handler: realIPv4Proxy, ReadHeaderTimeout: 15 * time.Second}
 	go func() {
 		log.Printf("Starting random IPv6 proxy server on %s:%d", cfg.Bind, cfg.RandomIPv6Port)
 		err := http.ListenAndServe(fmt.Sprintf("%s:%d", cfg.Bind, cfg.RandomIPv6Port), randomIPv6Proxy)
@@ -46,7 +44,7 @@ func main() {
 	}()
 
 	log.Printf("Starting real IPv4 proxy server on %s:%d", cfg.Bind, cfg.RealIPv4Port)
-	err := http.ListenAndServe(fmt.Sprintf("%s:%d", cfg.Bind, cfg.RealIPv4Port), realIPv4Proxy)
+	err := server.ListenAndServe()
 	if err != nil {
 		log.Fatal(err)
 	}
