@@ -71,13 +71,23 @@ HE_SERVER_IPV6="${HE_SERVER_IPV6%%/*}"
 : "${HE_ROUTED_PREFIX:?HE_ROUTED_PREFIX is required}"
 : "${HE_TUNNEL_NAME:?HE_TUNNEL_NAME is required}"
 
-ip tunnel show "$HE_TUNNEL_NAME" >/dev/null 2>&1 && exit 0
+if ip tunnel show "$HE_TUNNEL_NAME" >/dev/null 2>&1; then
+  ip link set "$HE_TUNNEL_NAME" down 2>/dev/null || true
+  ip tunnel del "$HE_TUNNEL_NAME"
+fi
+cleanup() {
+  ip link set "$HE_TUNNEL_NAME" down 2>/dev/null || true
+  ip tunnel del "$HE_TUNNEL_NAME" 2>/dev/null || true
+}
+trap cleanup ERR
 ip tunnel add "$HE_TUNNEL_NAME" mode sit remote "$HE_SERVER_IPV4" local "$LOCAL_IPV4" ttl 255
 ip link set "$HE_TUNNEL_NAME" mtu "${HE_MTU:-1480}"
 ip link set "$HE_TUNNEL_NAME" up
 ip -6 addr add "$LOCAL_IPV6" dev "$HE_TUNNEL_NAME"
+ip -6 route replace "$HE_SERVER_IPV6/128" dev "$HE_TUNNEL_NAME"
 ip -6 route replace "$HE_ROUTED_PREFIX" dev "$HE_TUNNEL_NAME"
-ip -6 route replace ::/0 via "$HE_SERVER_IPV6" dev "$HE_TUNNEL_NAME"
+ip -6 route replace default via "$HE_SERVER_IPV6" dev "$HE_TUNNEL_NAME" onlink
+trap - ERR
 EOF
 
 cat > /usr/local/sbin/he-ipv6-down <<'EOF'
@@ -272,7 +282,12 @@ IFS= read -r START_NOW < /dev/tty || exit 1
 if [[ ! "$START_NOW" =~ ^[Nn]$ ]]; then
   systemctl enable he-ipv6.service ipv6proxy.service
   systemctl start he-ipv6.service
-  if ! ip -6 route show default | grep -q 'dev he-ipv6'; then
+  if ! systemctl is-active --quiet he-ipv6.service; then
+    echo "HE 隧道服务启动失败，最近日志：" >&2
+    journalctl -u he-ipv6.service -n 50 --no-pager >&2
+    exit 1
+  fi
+  if ! ip -6 route show default | grep -q 'default via .* dev he-ipv6'; then
     echo "HE 隧道默认 IPv6 路由未建立，最近日志：" >&2
     ip -6 route >&2 || true
     systemctl stop he-ipv6.service
