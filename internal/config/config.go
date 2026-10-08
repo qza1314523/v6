@@ -19,6 +19,8 @@ type Config struct {
 	AuthConfig        AuthConfig
 	RealIPv4          string
 	PHPProxyEnabled   bool
+	TLSCertFile       string
+	TLSKeyFile        string
 }
 
 type AuthConfig struct {
@@ -41,6 +43,8 @@ func ParseFlags() *Config {
 	flag.BoolVar(&cfg.Verbose, "verbose", false, "Enable verbose logging")
 	flag.StringVar(&cfg.RealIPv4, "real-ipv4", "", "Server's real IPv4 address")
 	flag.BoolVar(&cfg.PHPProxyEnabled, "php-proxy", false, "Enable /Proxy.php forwarding endpoint")
+	flag.StringVar(&cfg.TLSCertFile, "tls-cert", "", "TLS certificate PEM file")
+	flag.StringVar(&cfg.TLSKeyFile, "tls-key", "", "TLS private key PEM file")
 	flag.Parse()
 	return cfg
 }
@@ -66,6 +70,9 @@ func (c *Config) Validate() error {
 	}
 	if c.AuthConfig.Username == "" && c.AuthConfig.Password != "" || c.AuthConfig.Username != "" && c.AuthConfig.Password == "" {
 		return fmt.Errorf("-username and -password must be provided together")
+	}
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		return fmt.Errorf("-tls-cert and -tls-key must be provided together")
 	}
 	return nil
 }

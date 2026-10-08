@@ -313,13 +313,42 @@ toggle_php_proxy() {
   source "\$PROXY_ENV_FILE"
   if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
     sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=false/' "\$PROXY_ENV_FILE"
+    sed -i 's/ -tls-cert [^ ]* -tls-key [^ ]*//' /etc/systemd/system/ipv6proxy.service
     echo "PHP 代理已关闭。"
   else
-    if ! grep -q '^IPV6_PROXY_PHP_ENABLED=' "\$PROXY_ENV_FILE"; then
-      printf '\nIPV6_PROXY_PHP_ENABLED=true\n' >> "\$PROXY_ENV_FILE"
-    else
-      sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=true/' "\$PROXY_ENV_FILE"
+    if ! command -v certbot >/dev/null; then
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends certbot
     fi
+    public_ipv4="\$(curl -4fsS --max-time 10 https://api.ipify.org)" || { echo "无法检测公网 IPv4，PHP 代理保持关闭。" >&2; return 1; }
+    [[ "\$public_ipv4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "公网 IPv4 无效，PHP 代理保持关闭。" >&2; return 1; }
+    if [[ ! -s /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem || ! -s /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem ]]; then
+      certbot certonly --standalone --preferred-profile shortlived --ip-address "\$public_ipv4" --http-01-port 80 --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring --cert-name ipv6proxy-ip || { echo "公网 IP 证书申请失败，PHP 代理保持关闭。" >&2; return 1; }
+    fi
+    cat > /etc/systemd/system/ipv6proxy-cert-renew.service <<'UNIT'
+[Unit]
+Description=Renew IPv6 Proxy public IP certificate
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/certbot renew --deploy-hook "systemctl try-restart ipv6proxy.service"
+UNIT
+    cat > /etc/systemd/system/ipv6proxy-cert-renew.timer <<'UNIT'
+[Unit]
+Description=Renew IPv6 Proxy certificate twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+    sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=true/' "\$PROXY_ENV_FILE"
+    if ! grep -q ' -tls-cert ' /etc/systemd/system/ipv6proxy.service; then
+      sed -i "s#^ExecStart=.*#ExecStart=\$BIN -cidr \$IPV6_PROXY_CIDR -real-ipv4 \$IPV6_PROXY_REAL_IPV4 -random-ipv6-port \$IPV6_PROXY_RANDOM_PORT -real-ipv4-port \$IPV6_PROXY_REAL_PORT -php-proxy \$IPV6_PROXY_PHP_ENABLED -tls-cert /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem -tls-key /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem#" /etc/systemd/system/ipv6proxy.service
+    fi
+    systemctl enable --now ipv6proxy-cert-renew.timer
     echo "PHP 代理已开启。"
   fi
   systemctl daemon-reload

@@ -48,10 +48,11 @@ func main() {
 	realMux.Handle("/Proxy.php", proxy.NewPHPProxyHandler(cfg, false))
 	randomServer := &http.Server{Addr: randomAddr, Handler: randomMux, ReadHeaderTimeout: 15 * time.Second}
 	realServer := &http.Server{Addr: realAddr, Handler: realMux, ReadHeaderTimeout: 15 * time.Second}
+	useTLS := cfg.TLSCertFile != ""
 
 	serverErrors := make(chan error, 2)
-	go serve(randomServer, "random IPv6", serverErrors)
-	go serve(realServer, "real IPv4", serverErrors)
+	go serve(randomServer, "random IPv6", useTLS, cfg.TLSCertFile, cfg.TLSKeyFile, serverErrors)
+	go serve(realServer, "real IPv4", useTLS, cfg.TLSCertFile, cfg.TLSKeyFile, serverErrors)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -70,9 +71,15 @@ func main() {
 	_ = realServer.Shutdown(ctx)
 }
 
-func serve(server *http.Server, name string, errors chan<- error) {
+func serve(server *http.Server, name string, useTLS bool, certFile, keyFile string, errors chan<- error) {
 	log.Printf("Starting %s proxy server on %s", name, server.Addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	var err error
+	if useTLS {
+		err = server.ListenAndServeTLS(certFile, keyFile)
+	} else {
+		err = server.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
 		errors <- err
 	}
 }
