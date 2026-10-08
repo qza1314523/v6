@@ -232,7 +232,7 @@ After=he-ipv6.service network-online.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/bin/ipv6proxy -cidr $IPV6_PROXY_CIDR -real-ipv4 $IPV6_PROXY_REAL_IPV4 -random-ipv6-port $IPV6_PROXY_RANDOM_PORT -real-ipv4-port $IPV6_PROXY_REAL_PORT -php-proxy \${IPV6_PROXY_PHP_ENABLED}
+ExecStart=/usr/local/sbin/ipv6proxy-start
 EnvironmentFile=-$PROXY_ENV_FILE
 WorkingDirectory=$INSTALL_DIR
 Restart=on-failure
@@ -246,6 +246,18 @@ ReadWritePaths=$INSTALL_DIR
 [Install]
 WantedBy=multi-user.target
 EOF
+
+cat > /usr/local/sbin/ipv6proxy-start <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$PROXY_ENV_FILE"
+args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy "\${IPV6_PROXY_PHP_ENABLED:-false}")
+if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
+  args+=(-tls-cert /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem -tls-key /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem)
+fi
+exec "$INSTALL_DIR/bin/ipv6proxy" "\${args[@]}"
+EOF
+chmod 0755 /usr/local/sbin/ipv6proxy-start
 
 cat > /usr/local/sbin/ipv6proxyctl <<EOF
 #!/usr/bin/env bash
@@ -315,7 +327,6 @@ toggle_php_proxy() {
   CERTBOT="\$CERTBOT_VENV/bin/certbot"
   if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
     sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=false/' "\$PROXY_ENV_FILE"
-    sed -i 's/ -tls-cert [^ ]* -tls-key [^ ]*//' /etc/systemd/system/ipv6proxy.service
     echo "PHP 代理已关闭。"
   else
     if [[ ! -x "\$CERTBOT" ]]; then
