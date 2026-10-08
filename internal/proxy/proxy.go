@@ -108,10 +108,10 @@ func newTransport(localIP net.IP) *http.Transport {
 }
 
 func newPHPProxyHandler(enabled bool, auth config.AuthConfig, selectIP func() (net.IP, error)) http.Handler {
-	return newPHPProxyHandlerWithTransport(enabled, auth, selectIP, newTransport)
+	return newPHPProxyHandlerWithTransport(enabled, auth, selectIP, func(ip net.IP) http.RoundTripper { return newTransport(ip) })
 }
 
-func newPHPProxyHandlerWithTransport(enabled bool, auth config.AuthConfig, selectIP func() (net.IP, error), transportFor func(net.IP) *http.Transport) http.Handler {
+func newPHPProxyHandlerWithTransport(enabled bool, auth config.AuthConfig, selectIP func() (net.IP, error), transportFor func(net.IP) http.RoundTripper) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !enabled {
 			http.NotFound(w, r)

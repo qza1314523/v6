@@ -16,13 +16,11 @@ import (
 
 func TestPHPProxyPreservesMethodHeadersQueryAndBody(t *testing.T) {
 	var gotMethod, gotHeader, gotQuery, gotBody string
-	transport := &http.Transport{}
-	transport.RegisterProtocol("test", roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+	handler := newPHPProxyHandlerWithTransport(true, config.AuthConfig{}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil }, func(net.IP) http.RoundTripper { return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		body, _ := io.ReadAll(r.Body)
 		gotMethod, gotHeader, gotQuery, gotBody = r.Method, r.Header.Get("X-Request-Test"), r.URL.RawQuery, string(body)
 		return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("origin-response")), Request: r}, nil
-	}))
-	handler := newPHPProxyHandlerWithTransport(true, config.AuthConfig{}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil }, func(net.IP) *http.Transport { return transport })
+	}) })
 	req := httptest.NewRequest(http.MethodPost, "/Proxy.php?url=https%3A%2F%2Fexample.com%2Fpath%3Fexisting%3Dyes", strings.NewReader("raw=body&x=1"))
 	req.Header.Set("X-Request-Test", "preserve-me")
 	rec := httptest.NewRecorder()
