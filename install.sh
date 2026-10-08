@@ -255,6 +255,7 @@ if [[ -f "$HE_ENV_FILE" ]]; then
   source "$HE_ENV_FILE"
   IPV6_PROXY_CIDR="${HE_ROUTED_PREFIX:-$IPV6_PROXY_CIDR}"
   IPV6_PROXY_REAL_IPV4="${LOCAL_IPV4:-$IPV6_PROXY_REAL_IPV4}"
+  sed -i "s#^IPV6_PROXY_CIDR=.*#IPV6_PROXY_CIDR=$IPV6_PROXY_CIDR#; s#^IPV6_PROXY_REAL_IPV4=.*#IPV6_PROXY_REAL_IPV4=$IPV6_PROXY_REAL_IPV4#" "$PROXY_ENV_FILE"
 fi
 args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}")
 if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
@@ -287,6 +288,7 @@ show_status() {
   echo "IPv6 路由:"
   ip -6 route show default || true
   echo "有效代理 CIDR: \$(sed -n 's/^HE_ROUTED_PREFIX=//p' "\$HE_ENV_FILE")"
+  echo "运行参数: \$(tr '\0' ' ' < /proc/\$(systemctl show -p MainPID --value ipv6proxy.service)/cmdline)"
 }
 
 diagnose() {
