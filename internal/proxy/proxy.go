@@ -11,6 +11,8 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +48,13 @@ func generateRandomIPv6(cidr string) (net.IP, error) {
 func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpServer {
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = cfg.Verbose
+	proxy.ConnectDial = func(network, addr string) (net.Conn, error) {
+		ip, err := selectOutgoingIP(cfg, useRandomIPv6)
+		if err != nil {
+			return nil, err
+		}
+		return dialWithSource(context.Background(), addr, ip)
+	}
 
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		if !checkAuth(cfg.AuthConfig.Username, cfg.AuthConfig.Password, req) {
@@ -85,11 +94,86 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 	return proxy
 }
 
+func NewPHPProxyHandler(cfg *config.Config, useRandomIPv6 bool) http.Handler {
+	return newPHPProxyHandler(cfg.PHPProxyEnabled, cfg.AuthConfig, func() (net.IP, error) {
+		return selectOutgoingIP(cfg, useRandomIPv6)
+	})
+}
+
 func newTransport(localIP net.IP) *http.Transport {
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: localIP}}
 	return &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
 		return dialer.DialContext(ctx, networkForSource(localIP), address)
 	}, MaxIdleConns: 64, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, ExpectContinueTimeout: 1 * time.Second}
+}
+
+func newPHPProxyHandler(enabled bool, auth config.AuthConfig, selectIP func() (net.IP, error)) http.Handler {
+	return newPHPProxyHandlerWithTransport(enabled, auth, selectIP, newTransport)
+}
+
+func newPHPProxyHandlerWithTransport(enabled bool, auth config.AuthConfig, selectIP func() (net.IP, error), transportFor func(net.IP) *http.Transport) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !enabled {
+			http.NotFound(w, r)
+			return
+		}
+		if !checkAuth(auth.Username, auth.Password, r) {
+			w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy.php"`)
+			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+			return
+		}
+		target, err := validatePHPProxyTarget(r.URL.Query().Get("url"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ip, err := selectIP()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		outgoing := r.Clone(r.Context())
+		outgoing.URL = target
+		outgoing.RequestURI = ""
+		outgoing.Host = target.Host
+		outgoing.Header = outgoing.Header.Clone()
+		for _, header := range []string{"Connection", "Proxy-Authorization", "Proxy-Connection", "Keep-Alive", "TE", "Trailer", "Transfer-Encoding", "Upgrade"} {
+			outgoing.Header.Del(header)
+		}
+		resp, err := transportFor(ip).RoundTrip(outgoing)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	})
+}
+
+func validatePHPProxyTarget(raw string) (*url.URL, error) {
+	target, err := url.Parse(raw)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.User != nil {
+		return nil, fmt.Errorf("url must be an absolute http or https URL without userinfo")
+	}
+	host := target.Hostname()
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()) {
+		return nil, fmt.Errorf("private or local targets are not allowed")
+	}
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") || strings.HasSuffix(strings.ToLower(host), ".local") {
+		return nil, fmt.Errorf("private or local targets are not allowed")
+	}
+	if port := target.Port(); port != "" {
+		if _, err := strconv.Atoi(port); err != nil {
+			return nil, fmt.Errorf("invalid target port")
+		}
+	}
+	return target, nil
 }
 
 func networkForSource(source net.IP) string {

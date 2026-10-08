@@ -220,6 +220,9 @@ IPV6_PROXY_REAL_IPV4=$IPV6_PROXY_REAL_IPV4
 IPV6_PROXY_RANDOM_PORT=$IPV6_PROXY_RANDOM_PORT
 IPV6_PROXY_REAL_PORT=$IPV6_PROXY_REAL_PORT
 EOF
+if ! grep -q '^IPV6_PROXY_PHP_ENABLED=' "$PROXY_ENV_FILE" 2>/dev/null; then
+  printf 'IPV6_PROXY_PHP_ENABLED=false\n' >> "$PROXY_ENV_FILE"
+fi
 
 cat > "$PROXY_SERVICE" <<EOF
 [Unit]
@@ -229,7 +232,7 @@ After=he-ipv6.service network-online.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/bin/ipv6proxy -cidr $IPV6_PROXY_CIDR -real-ipv4 $IPV6_PROXY_REAL_IPV4 -random-ipv6-port $IPV6_PROXY_RANDOM_PORT -real-ipv4-port $IPV6_PROXY_REAL_PORT
+ExecStart=$INSTALL_DIR/bin/ipv6proxy -cidr $IPV6_PROXY_CIDR -real-ipv4 $IPV6_PROXY_REAL_IPV4 -random-ipv6-port $IPV6_PROXY_RANDOM_PORT -real-ipv4-port $IPV6_PROXY_REAL_PORT -php-proxy \${IPV6_PROXY_PHP_ENABLED}
 EnvironmentFile=-$PROXY_ENV_FILE
 WorkingDirectory=$INSTALL_DIR
 Restart=on-failure
@@ -306,6 +309,24 @@ update_binary() {
   systemctl restart ipv6proxy.service
 }
 
+toggle_php_proxy() {
+  source "\$PROXY_ENV_FILE"
+  if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
+    sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=false/' "\$PROXY_ENV_FILE"
+    echo "PHP 代理已关闭。"
+  else
+    if ! grep -q '^IPV6_PROXY_PHP_ENABLED=' "\$PROXY_ENV_FILE"; then
+      printf '\nIPV6_PROXY_PHP_ENABLED=true\n' >> "\$PROXY_ENV_FILE"
+    else
+      sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=true/' "\$PROXY_ENV_FILE"
+    fi
+    echo "PHP 代理已开启。"
+  fi
+  systemctl daemon-reload
+  systemctl restart ipv6proxy.service
+  systemctl is-active --quiet ipv6proxy.service
+}
+
 while true; do
   echo
   echo "IPv6 Proxy 管理菜单"
@@ -319,8 +340,9 @@ while true; do
   echo "8) 取消开机自启动"
   echo "9) 编辑配置"
   echo "10) 更新程序并重建"
+  echo "11) PHP 代理: \$(source \"\$PROXY_ENV_FILE\"; echo \"\${IPV6_PROXY_PHP_ENABLED:-false}\") (切换开/关)"
   echo "0) 退出"
-  read -r -p "请选择 [0-10]: " choice < /dev/tty
+  read -r -p "请选择 [0-11]: " choice < /dev/tty
   case "\$choice" in
     1) show_status; pause ;;
     2) diagnose; pause ;;
@@ -332,6 +354,7 @@ while true; do
     8) systemctl disable he-ipv6.service ipv6proxy.service; pause ;;
     9) "\${EDITOR:-nano}" "\$HE_ENV_FILE"; "\${EDITOR:-nano}" "\$PROXY_ENV_FILE"; systemctl daemon-reload; pause ;;
     10) update_binary; pause ;;
+    11) toggle_php_proxy; pause ;;
     0) exit 0 ;;
     *) echo "无效选项，请输入 0-10" ;;
   esac

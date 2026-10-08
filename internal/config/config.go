@@ -18,6 +18,7 @@ type Config struct {
 	Verbose           bool
 	AuthConfig        AuthConfig
 	RealIPv4          string
+	PHPProxyEnabled   bool
 }
 
 type AuthConfig struct {
@@ -39,6 +40,7 @@ func ParseFlags() *Config {
 	flag.BoolVar(&cfg.UseDOH, "use-doh", true, "Use DNS over HTTPS instead of DNS over TLS")
 	flag.BoolVar(&cfg.Verbose, "verbose", false, "Enable verbose logging")
 	flag.StringVar(&cfg.RealIPv4, "real-ipv4", "", "Server's real IPv4 address")
+	flag.BoolVar(&cfg.PHPProxyEnabled, "php-proxy", false, "Enable /Proxy.php forwarding endpoint")
 	flag.Parse()
 	return cfg
 }

@@ -3,12 +3,61 @@ package proxy
 import (
 	"context"
 	"encoding/base64"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/surfmore/v6/internal/config"
 )
+
+func TestPHPProxyPreservesMethodHeadersQueryAndBody(t *testing.T) {
+	var gotMethod, gotHeader, gotQuery, gotBody string
+	transport := &http.Transport{}
+	transport.RegisterProtocol("test", roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		gotMethod, gotHeader, gotQuery, gotBody = r.Method, r.Header.Get("X-Request-Test"), r.URL.RawQuery, string(body)
+		return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("origin-response")), Request: r}, nil
+	}))
+	handler := newPHPProxyHandlerWithTransport(true, config.AuthConfig{}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil }, func(net.IP) *http.Transport { return transport })
+	req := httptest.NewRequest(http.MethodPost, "/Proxy.php?url=https%3A%2F%2Fexample.com%2Fpath%3Fexisting%3Dyes", strings.NewReader("raw=body&x=1"))
+	req.Header.Set("X-Request-Test", "preserve-me")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated || rec.Body.String() != "origin-response" {
+		t.Fatalf("unexpected response: status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if gotMethod != http.MethodPost || gotHeader != "preserve-me" || gotQuery != "existing=yes" || gotBody != "raw=body&x=1" {
+		t.Fatalf("request changed: method=%q header=%q query=%q body=%q", gotMethod, gotHeader, gotQuery, gotBody)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestPHPProxyCanBeDisabled(t *testing.T) {
+	handler := newPHPProxyHandler(false, config.AuthConfig{}, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/Proxy.php?url=https://example.com", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("disabled endpoint returned %d, want 404", rec.Code)
+	}
+}
+
+func TestPHPProxyRejectsInvalidTarget(t *testing.T) {
+	handler := newPHPProxyHandler(true, config.AuthConfig{}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil })
+	for _, target := range []string{"", "file:///etc/passwd", "https://user:pass@example.com/path"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/Proxy.php?url="+url.QueryEscape(target), nil)
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("target %q returned %d, want 400", target, rec.Code)
+		}
+	}
+}
 
 func TestNetworkForSourceMatchesAddressFamily(t *testing.T) {
 	if got := networkForSource(net.ParseIP("2001:db8::2")); got != "tcp6" {

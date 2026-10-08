@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -37,10 +38,16 @@ func main() {
 	randomIPv6Proxy := proxy.NewProxyServer(cfg, true)
 	realIPv4Proxy := proxy.NewProxyServer(cfg, false)
 
-	randomAddr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.RandomIPv6Port)
-	realAddr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.RealIPv4Port)
-	randomServer := &http.Server{Addr: randomAddr, Handler: randomIPv6Proxy, ReadHeaderTimeout: 15 * time.Second}
-	realServer := &http.Server{Addr: realAddr, Handler: realIPv4Proxy, ReadHeaderTimeout: 15 * time.Second}
+	randomAddr := net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.RandomIPv6Port))
+	realAddr := net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.RealIPv4Port))
+	randomMux := http.NewServeMux()
+	randomMux.Handle("/", randomIPv6Proxy)
+	randomMux.Handle("/Proxy.php", proxy.NewPHPProxyHandler(cfg, true))
+	realMux := http.NewServeMux()
+	realMux.Handle("/", realIPv4Proxy)
+	realMux.Handle("/Proxy.php", proxy.NewPHPProxyHandler(cfg, false))
+	randomServer := &http.Server{Addr: randomAddr, Handler: randomMux, ReadHeaderTimeout: 15 * time.Second}
+	realServer := &http.Server{Addr: realAddr, Handler: realMux, ReadHeaderTimeout: 15 * time.Second}
 
 	serverErrors := make(chan error, 2)
 	go serve(randomServer, "random IPv6", serverErrors)
