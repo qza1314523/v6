@@ -139,7 +139,7 @@ get_public_ipv4s() {
   ip -4 -o addr show scope global | awk '{split($4, a, "/"); print a[1]}' | while read -r address; do
     case "$address" in
       10.*|192.168.*|127.*|169.254.*|172.16.*|172.17.*|172.18.*|172.19.*|172.2[0-9].*|172.3[0-1].*|100.6[4-9].*|100.[7-9][0-9].*|100.1[0-1][0-9].*|100.12[0-7].*) ;;
-      *) printf '%s\\n' "$address" ;;
+      *) printf '%s\n' "$address" ;;
     esac
   done
 }
@@ -148,7 +148,7 @@ select_local_ipv4() {
   local candidates choice count=0
   mapfile -t candidates < <(get_public_ipv4s)
   for address in "${candidates[@]}"; do
-    [[ -n "$address" ]] && printf '  %d) %s\\n' "$((++count))" "$address" >&2
+    [[ -n "$address" ]] && printf '  %d) %s\n' "$((++count))" "$address" >&2
   done
   if ((count == 0)); then
     echo "未检测到公网 IPv4，请检查网卡后重试。" >&2
@@ -173,7 +173,7 @@ derive_local_ipv6() {
   local gateway="$1"
   gateway="${gateway%%/*}"
   if [[ "$gateway" =~ ::1$ ]]; then
-    printf '%s/64\\n' "${gateway%::1}::2"
+    printf '%s/64\n' "${gateway%::1}::2"
   else
     echo "HE 服务端 IPv6 网关不是常见的 ::1 格式，无法安全自动生成本机地址。" >&2
     echo "请使用 HE 控制台提供的本机隧道地址重新执行。" >&2
@@ -255,8 +255,8 @@ BIN="$INSTALL_DIR/bin/ipv6proxy"
 pause() { read -r -p "按 Enter 返回菜单..." _ < /dev/tty || true; }
 
 service_state() {
-  local unit="$1"
-  printf '%-22s active=%-10s enabled=%s\\n' "\$unit" "\$(systemctl is-active "\$unit" 2>/dev/null || true)" "\$(systemctl is-enabled "\$unit" 2>/dev/null || true)"
+  local unit="\$1"
+  printf '%-22s active=%-10s enabled=%s\n' "\$unit" "\$(systemctl is-active "\$unit" 2>/dev/null || true)" "\$(systemctl is-enabled "\$unit" 2>/dev/null || true)"
 }
 
 show_status() {
@@ -283,9 +283,9 @@ test_proxy() {
   for spec in "\$IPV6_PROXY_RANDOM_PORT https://api64.ipify.org IPv6" "\$IPV6_PROXY_REAL_PORT https://api.ipify.org IPv4"; do
     read -r port url label <<< "\$spec"
     if ipaddr=\$(curl --silent --show-error --fail --max-time 20 --proxy "http://127.0.0.1:\$port" "\$url"); then
-      printf '%s 端口 %s 成功，出口 IP: %s\\n' "\$label" "\$port" "\$ipaddr"
+      printf '%s 端口 %s 成功，出口 IP: %s\n' "\$label" "\$port" "\$ipaddr"
     else
-      printf '%s 端口 %s 失败\\n' "\$label" "\$port" >&2
+      printf '%s 端口 %s 失败\n' "\$label" "\$port" >&2
       failed=1
     fi
   done
