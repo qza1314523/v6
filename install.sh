@@ -310,20 +310,25 @@ update_binary() {
 }
 
 toggle_php_proxy() {
-  source "\$PROXY_ENV_FILE"
+  source /etc/default/ipv6proxy
+  CERTBOT_VENV="/opt/ipv6proxy/certbot-venv"
+  CERTBOT="\$CERTBOT_VENV/bin/certbot"
   if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
     sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=false/' "\$PROXY_ENV_FILE"
     sed -i 's/ -tls-cert [^ ]* -tls-key [^ ]*//' /etc/systemd/system/ipv6proxy.service
     echo "PHP 代理已关闭。"
   else
-    if ! command -v certbot >/dev/null; then
+    if [[ ! -x "\$CERTBOT" ]]; then
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends certbot
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-venv python3-pip
+      python3 -m venv "\$CERTBOT_VENV"
+      "\$CERTBOT_VENV/bin/pip" install --upgrade pip certbot
     fi
     public_ipv4="\$(curl -4fsS --max-time 10 https://api.ipify.org)" || { echo "无法检测公网 IPv4，PHP 代理保持关闭。" >&2; return 1; }
     [[ "\$public_ipv4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "公网 IPv4 无效，PHP 代理保持关闭。" >&2; return 1; }
     if [[ ! -s /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem || ! -s /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem ]]; then
-      certbot certonly --standalone --preferred-profile shortlived --ip-address "\$public_ipv4" --http-01-port 80 --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring --cert-name ipv6proxy-ip || { echo "公网 IP 证书申请失败，PHP 代理保持关闭。" >&2; return 1; }
+      "\$CERTBOT" --version
+      "\$CERTBOT" certonly --standalone --preferred-profile shortlived --ip-address "\$public_ipv4" --http-01-port 80 --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring --cert-name ipv6proxy-ip || { echo "公网 IP 证书申请失败，PHP 代理保持关闭。" >&2; return 1; }
     fi
     cat > /etc/systemd/system/ipv6proxy-cert-renew.service <<'UNIT'
 [Unit]
@@ -331,7 +336,7 @@ Description=Renew IPv6 Proxy public IP certificate
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/certbot renew --deploy-hook "systemctl try-restart ipv6proxy.service"
+ExecStart=/opt/ipv6proxy/certbot-venv/bin/certbot renew --deploy-hook "systemctl try-restart ipv6proxy.service"
 UNIT
     cat > /etc/systemd/system/ipv6proxy-cert-renew.timer <<'UNIT'
 [Unit]
@@ -369,7 +374,7 @@ while true; do
   echo "8) 取消开机自启动"
   echo "9) 编辑配置"
   echo "10) 更新程序并重建"
-  echo "11) PHP 代理: \$(source \"\$PROXY_ENV_FILE\"; echo \"\${IPV6_PROXY_PHP_ENABLED:-false}\") (切换开/关)"
+  echo "11) PHP 代理: \$(source /etc/default/ipv6proxy; echo "\${IPV6_PROXY_PHP_ENABLED:-false}") (切换开/关)"
   echo "0) 退出"
   read -r -p "请选择 [0-11]: " choice < /dev/tty
   case "\$choice" in
