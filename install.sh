@@ -263,7 +263,6 @@ if [[ -f "$HE_ENV_FILE" ]]; then
   source "$HE_ENV_FILE"
   IPV6_PROXY_CIDR="${HE_ROUTED_PREFIX:-$IPV6_PROXY_CIDR}"
   IPV6_PROXY_REAL_IPV4="${LOCAL_IPV4:-$IPV6_PROXY_REAL_IPV4}"
-  sed -i "s#^IPV6_PROXY_CIDR=.*#IPV6_PROXY_CIDR=$IPV6_PROXY_CIDR#; s#^IPV6_PROXY_REAL_IPV4=.*#IPV6_PROXY_REAL_IPV4=$IPV6_PROXY_REAL_IPV4#" "$PROXY_ENV_FILE"
 fi
 args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}" -allow-anonymous="\${IPV6_PROXY_ALLOW_ANONYMOUS:-false}" -max-concurrent="\${IPV6_PROXY_MAX_CONCURRENT:-256}")
 if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
