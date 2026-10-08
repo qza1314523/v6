@@ -21,11 +21,13 @@ type Config struct {
 	PHPProxyEnabled   bool
 	TLSCertFile       string
 	TLSKeyFile        string
+	MaxConcurrent     int
 }
 
 type AuthConfig struct {
-	Username string
-	Password string
+	Username       string
+	Password       string
+	AllowAnonymous bool
 }
 
 func ParseFlags() *Config {
@@ -45,6 +47,8 @@ func ParseFlags() *Config {
 	flag.BoolVar(&cfg.PHPProxyEnabled, "php-proxy", false, "Enable /Proxy.php forwarding endpoint")
 	flag.StringVar(&cfg.TLSCertFile, "tls-cert", "", "TLS certificate PEM file")
 	flag.StringVar(&cfg.TLSKeyFile, "tls-key", "", "TLS private key PEM file")
+	flag.BoolVar(&cfg.AuthConfig.AllowAnonymous, "allow-anonymous", false, "Allow unauthenticated proxy access (unsafe)")
+	flag.IntVar(&cfg.MaxConcurrent, "max-concurrent", 256, "Maximum concurrent proxy connections")
 	flag.Parse()
 	return cfg
 }
@@ -68,8 +72,14 @@ func (c *Config) Validate() error {
 	if c.RandomIPv6Port == c.RealIPv4Port {
 		return fmt.Errorf("proxy ports must be different")
 	}
+	if c.MaxConcurrent < 1 {
+		return fmt.Errorf("-max-concurrent must be positive")
+	}
 	if c.AuthConfig.Username == "" && c.AuthConfig.Password != "" || c.AuthConfig.Username != "" && c.AuthConfig.Password == "" {
 		return fmt.Errorf("-username and -password must be provided together")
+	}
+	if c.AuthConfig.Username == "" && !c.AuthConfig.AllowAnonymous {
+		return fmt.Errorf("authentication is required; provide -username and -password, or explicitly set -allow-anonymous")
 	}
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return fmt.Errorf("-tls-cert and -tls-key must be provided together")

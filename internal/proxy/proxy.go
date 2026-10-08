@@ -48,16 +48,28 @@ func generateRandomIPv6(cidr string) (net.IP, error) {
 func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpServer {
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = cfg.Verbose
+	semaphore := make(chan struct{}, cfg.MaxConcurrent)
 	proxy.ConnectDial = func(network, addr string) (net.Conn, error) {
+		select {
+		case semaphore <- struct{}{}:
+		default:
+			return nil, fmt.Errorf("proxy connection limit reached")
+		}
 		ip, err := selectOutgoingIP(cfg, useRandomIPv6)
 		if err != nil {
+			<-semaphore
 			return nil, err
 		}
-		return dialWithSource(context.Background(), addr, ip)
+		conn, err := dialWithSource(context.Background(), addr, ip)
+		if err != nil {
+			<-semaphore
+			return nil, err
+		}
+		return &limitedConn{Conn: conn, release: func() { <-semaphore }}, nil
 	}
 
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		if !checkAuth(cfg.AuthConfig.Username, cfg.AuthConfig.Password, req) {
+		if !checkAuthConfig(cfg.AuthConfig, req) {
 			return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusProxyAuthRequired, "Proxy Authentication Required")
 		}
 		outgoingIP, err := selectOutgoingIP(cfg, useRandomIPv6)
@@ -71,7 +83,7 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 		return req, nil
 	})
 	proxy.OnRequest().HijackConnect(func(req *http.Request, client net.Conn, _ *goproxy.ProxyCtx) {
-		if !checkAuth(cfg.AuthConfig.Username, cfg.AuthConfig.Password, req) {
+		if !checkAuthConfig(cfg.AuthConfig, req) {
 			_, _ = io.WriteString(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Proxy\"\r\n\r\n")
 			_ = client.Close()
 			return
@@ -92,6 +104,17 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 		go copyData(server, client)
 	})
 	return proxy
+}
+
+type limitedConn struct {
+	net.Conn
+	release func()
+}
+
+func (c *limitedConn) Close() error {
+	err := c.Conn.Close()
+	c.release()
+	return err
 }
 
 func NewPHPProxyHandler(cfg *config.Config, useRandomIPv6 bool) http.Handler {
@@ -117,7 +140,7 @@ func newPHPProxyHandlerWithTransport(enabled bool, auth config.AuthConfig, selec
 			http.NotFound(w, r)
 			return
 		}
-		if !checkAuth(auth.Username, auth.Password, r) {
+		if !checkAuthConfig(auth, r) {
 			w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy.php"`)
 			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
 			return
@@ -162,7 +185,7 @@ func validatePHPProxyTarget(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("url must be an absolute http or https URL without userinfo")
 	}
 	host := target.Hostname()
-	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()) {
+	if ip := net.ParseIP(host); ip != nil && forbiddenTargetIP(ip) {
 		return nil, fmt.Errorf("private or local targets are not allowed")
 	}
 	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") || strings.HasSuffix(strings.ToLower(host), ".local") {
@@ -173,7 +196,22 @@ func validatePHPProxyTarget(raw string) (*url.URL, error) {
 			return nil, fmt.Errorf("invalid target port")
 		}
 	}
+	if net.ParseIP(host) == nil {
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			return nil, fmt.Errorf("target host cannot be resolved")
+		}
+		for _, ip := range ips {
+			if forbiddenTargetIP(ip) {
+				return nil, fmt.Errorf("private or local targets are not allowed")
+			}
+		}
+	}
 	return target, nil
+}
+
+func forbiddenTargetIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
 func networkForSource(source net.IP) string {
@@ -202,6 +240,13 @@ func selectOutgoingIP(cfg *config.Config, random bool) (net.IP, error) {
 func writeProxyError(client net.Conn, req *http.Request, err error) {
 	_, _ = io.WriteString(client, fmt.Sprintf("%s 502 Bad Gateway\r\n\r\n%s", req.Proto, err))
 	_ = client.Close()
+}
+
+func checkAuthConfig(auth config.AuthConfig, req *http.Request) bool {
+	if auth.AllowAnonymous {
+		return true
+	}
+	return checkAuth(auth.Username, auth.Password, req)
 }
 
 func checkAuth(username, password string, req *http.Request) bool {

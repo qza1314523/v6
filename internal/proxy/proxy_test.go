@@ -125,12 +125,31 @@ func TestCheckAuth(t *testing.T) {
 }
 
 func TestValidateConfig(t *testing.T) {
-	cfg := &config.Config{CIDR: "2001:db8::/64", RealIPv4: "192.0.2.10", RandomIPv6Port: 100, RealIPv4Port: 101}
+	cfg := &config.Config{CIDR: "2001:db8::/64", RealIPv4: "192.0.2.10", RandomIPv6Port: 100, RealIPv4Port: 101, MaxConcurrent: 256}
+	cfg.AuthConfig.AllowAnonymous = true
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	cfg.RealIPv4 = "2001:db8::1"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("IPv6 accepted as real IPv4")
+	}
+}
+
+func TestCheckAuthConfigRequiresExplicitAnonymousOptIn(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
+	if checkAuthConfig(config.AuthConfig{}, req) {
+		t.Fatal("anonymous access accepted without explicit opt-in")
+	}
+	if !checkAuthConfig(config.AuthConfig{AllowAnonymous: true}, req) {
+		t.Fatal("explicit anonymous opt-in rejected")
+	}
+}
+
+func TestValidatePHPProxyTargetRejectsPrivateLiterals(t *testing.T) {
+	for _, target := range []string{"http://127.0.0.1/", "http://169.254.169.254/", "http://[::1]/"} {
+		if _, err := validatePHPProxyTarget(target); err == nil {
+			t.Errorf("target %q was accepted", target)
+		}
 	}
 }

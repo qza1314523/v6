@@ -219,9 +219,17 @@ IPV6_PROXY_CIDR=$IPV6_PROXY_CIDR
 IPV6_PROXY_REAL_IPV4=$IPV6_PROXY_REAL_IPV4
 IPV6_PROXY_RANDOM_PORT=$IPV6_PROXY_RANDOM_PORT
 IPV6_PROXY_REAL_PORT=$IPV6_PROXY_REAL_PORT
+IPV6_PROXY_ALLOW_ANONYMOUS=false
+IPV6_PROXY_MAX_CONCURRENT=256
 EOF
 if ! grep -q '^IPV6_PROXY_PHP_ENABLED=' "$PROXY_ENV_FILE" 2>/dev/null; then
   printf 'IPV6_PROXY_PHP_ENABLED=false\n' >> "$PROXY_ENV_FILE"
+fi
+if ! grep -q '^IPV6_PROXY_ALLOW_ANONYMOUS=' "$PROXY_ENV_FILE" 2>/dev/null; then
+  printf 'IPV6_PROXY_ALLOW_ANONYMOUS=false\n' >> "$PROXY_ENV_FILE"
+fi
+if ! grep -q '^IPV6_PROXY_MAX_CONCURRENT=' "$PROXY_ENV_FILE" 2>/dev/null; then
+  printf 'IPV6_PROXY_MAX_CONCURRENT=256\n' >> "$PROXY_ENV_FILE"
 fi
 
 cat > "$PROXY_SERVICE" <<EOF
@@ -257,7 +265,7 @@ if [[ -f "$HE_ENV_FILE" ]]; then
   IPV6_PROXY_REAL_IPV4="${LOCAL_IPV4:-$IPV6_PROXY_REAL_IPV4}"
   sed -i "s#^IPV6_PROXY_CIDR=.*#IPV6_PROXY_CIDR=$IPV6_PROXY_CIDR#; s#^IPV6_PROXY_REAL_IPV4=.*#IPV6_PROXY_REAL_IPV4=$IPV6_PROXY_REAL_IPV4#" "$PROXY_ENV_FILE"
 fi
-args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}")
+args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}" -allow-anonymous="\${IPV6_PROXY_ALLOW_ANONYMOUS:-false}" -max-concurrent="\${IPV6_PROXY_MAX_CONCURRENT:-256}")
 if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
   args+=(-tls-cert /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem -tls-key /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem)
 fi
