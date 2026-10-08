@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -72,10 +73,21 @@ func main() {
 }
 
 func serve(server *http.Server, name string, useTLS bool, certFile, keyFile string, errors chan<- error) {
-	log.Printf("Starting %s proxy server on %s", name, server.Addr)
+	log.Printf("Starting %s %s server on %s", name, map[bool]string{true: "HTTPS", false: "HTTP"}[useTLS], server.Addr)
 	var err error
 	if useTLS {
-		err = server.ListenAndServeTLS(certFile, keyFile)
+		cert, loadErr := tls.LoadX509KeyPair(certFile, keyFile)
+		if loadErr != nil {
+			errors <- loadErr
+			return
+		}
+		listener, listenErr := net.Listen("tcp", server.Addr)
+		if listenErr != nil {
+			errors <- listenErr
+			return
+		}
+		tlsListener := tls.NewListener(listener, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
+		err = server.Serve(tlsListener)
 	} else {
 		err = server.ListenAndServe()
 	}
