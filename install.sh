@@ -251,7 +251,7 @@ cat > /usr/local/sbin/ipv6proxy-start <<EOF
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$PROXY_ENV_FILE"
-args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy "\${IPV6_PROXY_PHP_ENABLED:-false}")
+args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}")
 if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
   args+=(-tls-cert /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem -tls-key /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem)
 fi
