@@ -10,7 +10,7 @@
 curl -fsSL "https://raw.githubusercontent.com/qza1314523/v6/main/install.sh?$(date +%s)" | sudo bash
 ```
 
-安装器会先配置并验证 HE 隧道，再启动代理。如果隧道启动失败，会打印 `he-ipv6.service` 的详细日志和当前 IPv6 路由；不会继续启动代理。公网 IPv4 自动检测，多地址时选择序号；隧道 IPv6 自动生成，MTU 固定为 `1480`。
+安装器会先配置并验证 HE 隧道，再启动代理。如果隧道启动失败，会打印 `he-ipv6.service` 的详细日志和当前 IPv6 路由；不会继续启动代理。公网 IPv4 自动检测，多地址时选择序号；隧道 IPv6 自动生成，MTU 固定为 `1480`。代理默认拒绝匿名访问；请在 `/etc/default/ipv6proxy` 配置账号密码，或明确设置 `IPV6_PROXY_ALLOW_ANONYMOUS=true`（不推荐公网使用）。
 
 ### 管理菜单
 
