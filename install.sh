@@ -366,11 +366,12 @@ if [[ ! "$START_NOW" =~ ^[Nn]$ ]]; then
   fi
   echo "HE 隧道和代理已启动。"
   echo "开始测试代理出口 IP..."
-  for proxy_port in "$IPV6_PROXY_RANDOM_PORT" "$IPV6_PROXY_REAL_PORT"; do
-    if proxy_ip=$(curl --silent --show-error --max-time 20 --proxy "http://127.0.0.1:$proxy_port" https://api.ipify.org); then
-      echo "端口 $proxy_port 测试成功，出口 IP: $proxy_ip"
+  for proxy_spec in "$IPV6_PROXY_RANDOM_PORT https://api64.ipify.org IPv6" "$IPV6_PROXY_REAL_PORT https://api.ipify.org IPv4"; do
+    read -r proxy_port proxy_url proxy_family <<< "$proxy_spec"
+    if proxy_ip=$(curl --silent --show-error --fail --max-time 20 --proxy "http://127.0.0.1:$proxy_port" "$proxy_url"); then
+      echo "$proxy_family 端口 $proxy_port 测试成功，出口 IP: $proxy_ip"
     else
-      echo "端口 $proxy_port 测试失败，请检查: journalctl -u ipv6proxy -n 50 --no-pager" >&2
+      echo "$proxy_family 端口 $proxy_port 测试失败，请检查: journalctl -u ipv6proxy -n 50 --no-pager" >&2
     fi
   done
 else

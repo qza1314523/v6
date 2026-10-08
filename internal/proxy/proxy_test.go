@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/base64"
 	"net"
 	"net/http"
@@ -8,6 +9,34 @@ import (
 
 	"github.com/surfmore/v6/internal/config"
 )
+
+func TestNetworkForSourceMatchesAddressFamily(t *testing.T) {
+	if got := networkForSource(net.ParseIP("2001:db8::2")); got != "tcp6" {
+		t.Fatalf("IPv6 source selected %q, want tcp6", got)
+	}
+	if got := networkForSource(net.ParseIP("192.0.2.20")); got != "tcp4" {
+		t.Fatalf("IPv4 source selected %q, want tcp4", got)
+	}
+}
+
+func TestDialWithSourceCanReachMatchingListener(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("IPv4 loopback unavailable: %v", err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}()
+	conn, err := dialWithSource(context.Background(), listener.Addr().String(), net.ParseIP("127.0.0.1"))
+	if err != nil {
+		t.Fatalf("matching-family dial failed: %v", err)
+	}
+	conn.Close()
+}
 
 func TestGenerateRandomIPv6KeepsPrefix(t *testing.T) {
 	const cidr = "2001:db8:1234:5678::/56"

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -71,7 +72,7 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 			writeProxyError(client, req, err)
 			return
 		}
-		server, err := (&net.Dialer{Timeout: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: outgoingIP}}).Dial("tcp", req.URL.Host)
+		server, err := dialWithSource(req.Context(), req.URL.Host, outgoingIP)
 		if err != nil {
 			log.Printf("CONNECT %s from %s failed: %v", req.URL.Host, outgoingIP, err)
 			writeProxyError(client, req, err)
@@ -86,7 +87,21 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 
 func newTransport(localIP net.IP) *http.Transport {
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: localIP}}
-	return &http.Transport{Proxy: nil, DialContext: dialer.DialContext, MaxIdleConns: 64, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, ExpectContinueTimeout: 1 * time.Second}
+	return &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
+		return dialer.DialContext(ctx, networkForSource(localIP), address)
+	}, MaxIdleConns: 64, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, ExpectContinueTimeout: 1 * time.Second}
+}
+
+func networkForSource(source net.IP) string {
+	if source.To4() != nil {
+		return "tcp4"
+	}
+	return "tcp6"
+}
+
+func dialWithSource(ctx context.Context, address string, source net.IP) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: source}}
+	return dialer.DialContext(ctx, networkForSource(source), address)
 }
 
 func selectOutgoingIP(cfg *config.Config, random bool) (net.IP, error) {
