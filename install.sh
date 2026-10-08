@@ -251,6 +251,11 @@ cat > /usr/local/sbin/ipv6proxy-start <<EOF
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$PROXY_ENV_FILE"
+if [[ -f "$HE_ENV_FILE" ]]; then
+  source "$HE_ENV_FILE"
+  IPV6_PROXY_CIDR="${HE_ROUTED_PREFIX:-$IPV6_PROXY_CIDR}"
+  IPV6_PROXY_REAL_IPV4="${LOCAL_IPV4:-$IPV6_PROXY_REAL_IPV4}"
+fi
 args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}")
 if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
   args+=(-tls-cert /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem -tls-key /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem)
@@ -281,6 +286,7 @@ show_status() {
   ss -lntup | grep -E ':(\${IPV6_PROXY_RANDOM_PORT:-100}|\${IPV6_PROXY_REAL_PORT:-101})([[:space:]]|$)' || echo "  未发现代理监听"
   echo "IPv6 路由:"
   ip -6 route show default || true
+  echo "有效代理 CIDR: \$(sed -n 's/^HE_ROUTED_PREFIX=//p' "\$HE_ENV_FILE")"
 }
 
 diagnose() {
@@ -401,7 +407,7 @@ while true; do
     10) update_binary; pause ;;
     11) toggle_php_proxy; pause ;;
     0) exit 0 ;;
-    *) echo "无效选项，请输入 0-10" ;;
+    *) echo "无效选项，请输入 0-11" ;;
   esac
 done
 EOF
