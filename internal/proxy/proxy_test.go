@@ -16,7 +16,7 @@ import (
 
 func TestPHPProxyPreservesMethodHeadersQueryAndBody(t *testing.T) {
 	var gotMethod, gotHeader, gotQuery, gotBody string
-	handler := newPHPProxyHandlerWithTransport(true, config.AuthConfig{}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil }, func(net.IP) http.RoundTripper { return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+	handler := newPHPProxyHandlerWithTransport(true, config.AuthConfig{AllowAnonymous: true}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil }, func(net.IP) http.RoundTripper { return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		body, _ := io.ReadAll(r.Body)
 		gotMethod, gotHeader, gotQuery, gotBody = r.Method, r.Header.Get("X-Request-Test"), r.URL.RawQuery, string(body)
 		return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("origin-response")), Request: r}, nil
@@ -47,7 +47,7 @@ func TestPHPProxyCanBeDisabled(t *testing.T) {
 }
 
 func TestPHPProxyRejectsInvalidTarget(t *testing.T) {
-	handler := newPHPProxyHandler(true, config.AuthConfig{}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil })
+	handler := newPHPProxyHandler(true, config.AuthConfig{AllowAnonymous: true}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil })
 	for _, target := range []string{"", "file:///etc/passwd", "https://user:pass@example.com/path"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/Proxy.php?url="+url.QueryEscape(target), nil)
