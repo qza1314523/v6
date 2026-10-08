@@ -246,6 +246,9 @@ func checkAuthConfig(auth config.AuthConfig, req *http.Request) bool {
 	if auth.AllowAnonymous {
 		return true
 	}
+	if auth.Username == "" || auth.Password == "" {
+		return false
+	}
 	return checkAuth(auth.Username, auth.Password, req)
 }
 
