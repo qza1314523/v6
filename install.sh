@@ -309,11 +309,13 @@ diagnose() {
 
 test_proxy() {
   source "\$PROXY_ENV_FILE"
-  local failed=0 ipaddr scheme="http"
+  local failed=0 ipaddr scheme="http" proxy_url
   [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]] && scheme="https"
   for spec in "\$IPV6_PROXY_RANDOM_PORT https://api64.ipify.org IPv6" "\$IPV6_PROXY_REAL_PORT https://api.ipify.org IPv4"; do
     read -r port url label <<< "\$spec"
-    if ipaddr=\$(curl --silent --show-error --fail --insecure --max-time 20 --proxy "\${scheme}://127.0.0.1:\$port" "\$url"); then
+    proxy_url="\${scheme}://127.0.0.1:\$port"
+    if [[ "\$scheme" == https ]]; then proxy_url="\${scheme}://156.246.95.73:\$port"; fi
+    if ipaddr=\$(curl --silent --show-error --fail --insecure --max-time 20 --proxy "\$proxy_url" "\$url"); then
       printf '%s 端口 %s 成功，出口 IP: %s\n' "\$label" "\$port" "\$ipaddr"
     else
       printf '%s 端口 %s 失败\n' "\$label" "\$port" >&2
