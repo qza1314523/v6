@@ -288,10 +288,11 @@ service_state() {
 }
 
 show_status() {
+  source "\$PROXY_ENV_FILE"
   service_state he-ipv6.service
   service_state ipv6proxy.service
   echo "监听端口:"
-  ss -lntup | grep -E ':(\${IPV6_PROXY_RANDOM_PORT:-100}|\${IPV6_PROXY_REAL_PORT:-101})([[:space:]]|$)' || echo "  未发现代理监听"
+  ss -lntup | grep -E ":(\${IPV6_PROXY_RANDOM_PORT:-100}|\${IPV6_PROXY_REAL_PORT:-101})([[:space:]]|$)" || echo "  未发现代理监听"
   echo "IPv6 路由:"
   ip -6 route show default || true
   echo "有效代理 CIDR: \$(sed -n 's/^HE_ROUTED_PREFIX=//p' "\$HE_ENV_FILE")"
@@ -315,7 +316,7 @@ test_proxy() {
     read -r port url label <<< "\$spec"
     proxy_url="\${scheme}://127.0.0.1:\$port"
     if [[ "\$scheme" == https ]]; then proxy_url="\${scheme}://156.246.95.73:\$port"; fi
-    if ipaddr=\$(curl --silent --show-error --fail --insecure --max-time 20 --proxy "\$proxy_url" "\$url"); then
+    if ipaddr=\$(curl --silent --show-error --fail --insecure --max-time 20 --proxy "\$proxy_url" --noproxy '' "\$url"); then
       printf '%s 端口 %s 成功，出口 IP: %s\n' "\$label" "\$port" "\$ipaddr"
     else
       printf '%s 端口 %s 失败\n' "\$label" "\$port" >&2
