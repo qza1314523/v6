@@ -309,10 +309,11 @@ diagnose() {
 
 test_proxy() {
   source "\$PROXY_ENV_FILE"
-  local failed=0 ipaddr
+  local failed=0 ipaddr scheme="http"
+  [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]] && scheme="https"
   for spec in "\$IPV6_PROXY_RANDOM_PORT https://api64.ipify.org IPv6" "\$IPV6_PROXY_REAL_PORT https://api.ipify.org IPv4"; do
     read -r port url label <<< "\$spec"
-    if ipaddr=\$(curl --silent --show-error --fail --max-time 20 --proxy "http://127.0.0.1:\$port" "\$url"); then
+    if ipaddr=\$(curl --silent --show-error --fail --insecure --max-time 20 --proxy "\${scheme}://127.0.0.1:\$port" "\$url"); then
       printf '%s 端口 %s 成功，出口 IP: %s\n' "\$label" "\$port" "\$ipaddr"
     else
       printf '%s 端口 %s 失败\n' "\$label" "\$port" >&2
@@ -400,7 +401,7 @@ while true; do
   echo "8) 取消开机自启动"
   echo "9) 编辑配置"
   echo "10) 更新程序并重建"
-  echo "11) PHP 代理: \$(source /etc/default/ipv6proxy; echo "\${IPV6_PROXY_PHP_ENABLED:-false}") (切换开/关)"
+  echo "11) PHP 代理: \$(awk -F= '/^IPV6_PROXY_PHP_ENABLED=/{print \$2}' "\$PROXY_ENV_FILE") (切换开/关)"
   echo "0) 退出"
   read -r -p "请选择 [0-11]: " choice < /dev/tty
   case "\$choice" in
