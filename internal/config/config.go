@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/url"
+	"strings"
 )
 
 type Config struct {
@@ -22,6 +24,29 @@ type Config struct {
 	TLSCertFile       string
 	TLSKeyFile        string
 	MaxConcurrent     int
+	EndpointMode      string
+	Domain            string
+	CertName          string
+}
+
+func ValidateEndpointMode(mode, domain string) error {
+	switch mode {
+	case "ipv4-http", "ipv4-https":
+		if domain != "" {
+			return fmt.Errorf("domain is only valid in domain-https mode")
+		}
+	case "domain-https":
+		if domain == "" {
+			return fmt.Errorf("domain is required in domain-https mode")
+		}
+		u, err := url.Parse("https://" + domain)
+		if err != nil || u.Hostname() != domain || strings.ContainsAny(domain, "/:@?#") || net.ParseIP(domain) != nil {
+			return fmt.Errorf("invalid DNS domain %q", domain)
+		}
+	default:
+		return fmt.Errorf("endpoint mode must be ipv4-http, ipv4-https, or domain-https")
+	}
+	return nil
 }
 
 type AuthConfig struct {
@@ -49,6 +74,9 @@ func ParseFlags() *Config {
 	flag.StringVar(&cfg.TLSKeyFile, "tls-key", "", "TLS private key PEM file")
 	flag.BoolVar(&cfg.AuthConfig.AllowAnonymous, "allow-anonymous", false, "Allow unauthenticated proxy access (unsafe)")
 	flag.IntVar(&cfg.MaxConcurrent, "max-concurrent", 256, "Maximum concurrent proxy connections")
+	flag.StringVar(&cfg.EndpointMode, "endpoint-mode", "ipv4-http", "Endpoint mode: ipv4-http, ipv4-https, domain-https")
+	flag.StringVar(&cfg.Domain, "domain", "", "DNS hostname for domain-https mode")
+	flag.StringVar(&cfg.CertName, "cert-name", "ipv6proxy-ip", "Certbot certificate name")
 	flag.Parse()
 	return cfg
 }
@@ -83,6 +111,15 @@ func (c *Config) Validate() error {
 	}
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return fmt.Errorf("-tls-cert and -tls-key must be provided together")
+	}
+	if err := ValidateEndpointMode(c.EndpointMode, c.Domain); err != nil {
+		return err
+	}
+	if c.EndpointMode == "ipv4-http" && c.TLSCertFile != "" {
+		return fmt.Errorf("TLS certificate supplied while endpoint mode is ipv4-http")
+	}
+	if c.EndpointMode != "ipv4-http" && c.TLSCertFile == "" {
+		return fmt.Errorf("TLS certificate and key are required for HTTPS endpoint mode")
 	}
 	return nil
 }

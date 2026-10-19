@@ -219,6 +219,9 @@ IPV6_PROXY_CIDR=$IPV6_PROXY_CIDR
 IPV6_PROXY_REAL_IPV4=$IPV6_PROXY_REAL_IPV4
 IPV6_PROXY_RANDOM_PORT=$IPV6_PROXY_RANDOM_PORT
 IPV6_PROXY_REAL_PORT=$IPV6_PROXY_REAL_PORT
+IPV6_PROXY_ENDPOINT_MODE=ipv4-http
+IPV6_PROXY_DOMAIN=
+IPV6_PROXY_CERT_NAME=ipv6proxy-ip
 IPV6_PROXY_ALLOW_ANONYMOUS=false
 IPV6_PROXY_MAX_CONCURRENT=256
 EOF
@@ -231,6 +234,12 @@ fi
 if ! grep -q '^IPV6_PROXY_MAX_CONCURRENT=' "$PROXY_ENV_FILE" 2>/dev/null; then
   printf 'IPV6_PROXY_MAX_CONCURRENT=256\n' >> "$PROXY_ENV_FILE"
 fi
+mode_default=ipv4-http
+[[ "${IPV6_PROXY_PHP_ENABLED:-false}" == true ]] && mode_default=ipv4-https
+for setting in "IPV6_PROXY_ENDPOINT_MODE=$mode_default" 'IPV6_PROXY_DOMAIN=' 'IPV6_PROXY_CERT_NAME=ipv6proxy-ip'; do
+  key=${setting%%=*}
+  grep -q "^${key}=" "$PROXY_ENV_FILE" || printf '%s\n' "$setting" >> "$PROXY_ENV_FILE"
+done
 
 cat > "$PROXY_SERVICE" <<EOF
 [Unit]
@@ -264,10 +273,15 @@ if [[ -f "$HE_ENV_FILE" ]]; then
   IPV6_PROXY_CIDR="${HE_ROUTED_PREFIX:-$IPV6_PROXY_CIDR}"
   IPV6_PROXY_REAL_IPV4="${LOCAL_IPV4:-$IPV6_PROXY_REAL_IPV4}"
 fi
-args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}" -allow-anonymous="\${IPV6_PROXY_ALLOW_ANONYMOUS:-false}" -max-concurrent="\${IPV6_PROXY_MAX_CONCURRENT:-256}")
-if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
-  args+=(-tls-cert /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem -tls-key /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem)
-fi
+mode="\${IPV6_PROXY_ENDPOINT_MODE:-ipv4-http}"
+args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}" -allow-anonymous="\${IPV6_PROXY_ALLOW_ANONYMOUS:-false}" -max-concurrent="\${IPV6_PROXY_MAX_CONCURRENT:-256}" -endpoint-mode="\$mode" -cert-name="\${IPV6_PROXY_CERT_NAME:-ipv6proxy-ip}")
+if [[ "\$mode" == domain-https ]]; then args+=(-domain "\$IPV6_PROXY_DOMAIN"); fi
+case "\$mode" in
+  ipv4-http) ;;
+  ipv4-https) args+=(-tls-cert "/etc/letsencrypt/live/\${IPV6_PROXY_CERT_NAME:-ipv6proxy-ip}/fullchain.pem" -tls-key "/etc/letsencrypt/live/\${IPV6_PROXY_CERT_NAME:-ipv6proxy-ip}/privkey.pem") ;;
+  domain-https) args+=(-tls-cert "/etc/letsencrypt/live/\${IPV6_PROXY_CERT_NAME:-ipv6proxy-ip}/fullchain.pem" -tls-key "/etc/letsencrypt/live/\${IPV6_PROXY_CERT_NAME:-ipv6proxy-ip}/privkey.pem") ;;
+  *) echo "无效 endpoint mode: \$mode" >&2; exit 1 ;;
+esac
 exec "$INSTALL_DIR/bin/ipv6proxy" "\${args[@]}"
 EOF
 chmod 0755 /usr/local/sbin/ipv6proxy-start
@@ -291,6 +305,7 @@ show_status() {
   source "\$PROXY_ENV_FILE"
   service_state he-ipv6.service
   service_state ipv6proxy.service
+  echo "入口模式: \${IPV6_PROXY_ENDPOINT_MODE:-ipv4-http} \${IPV6_PROXY_DOMAIN:+(\$IPV6_PROXY_DOMAIN)}"
   echo "监听端口:"
   ss -lntup | grep -E ":(\${IPV6_PROXY_RANDOM_PORT:-100}|\${IPV6_PROXY_REAL_PORT:-101})([[:space:]]|$)" || echo "  未发现代理监听"
   echo "IPv6 路由:"
@@ -311,11 +326,13 @@ diagnose() {
 test_proxy() {
   source "\$PROXY_ENV_FILE"
   local failed=0 ipaddr scheme="http" proxy_url
-  [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]] && scheme="https"
+  [[ "\${IPV6_PROXY_ENDPOINT_MODE:-ipv4-http}" != ipv4-http ]] && scheme="https"
   for spec in "\$IPV6_PROXY_RANDOM_PORT https://api64.ipify.org IPv6" "\$IPV6_PROXY_REAL_PORT https://api.ipify.org IPv4"; do
     read -r port url label <<< "\$spec"
     proxy_url="\${scheme}://127.0.0.1:\$port"
-    if [[ "\$scheme" == https ]]; then proxy_url="\${scheme}://156.246.95.73:\$port"; fi
+    if [[ "\$scheme" == https ]]; then
+      if [[ "\${IPV6_PROXY_ENDPOINT_MODE}" == domain-https ]]; then proxy_url="https://\$IPV6_PROXY_DOMAIN:\$port"; else proxy_url="https://156.246.95.73:\$port"; fi
+    fi
     if ipaddr=\$(curl --silent --show-error --fail --insecure --max-time 20 --proxy "\$proxy_url" --noproxy '' "\$url"); then
       printf '%s 端口 %s 成功，出口 IP: %s\n' "\$label" "\$port" "\$ipaddr"
     else
@@ -340,30 +357,45 @@ update_binary() {
   systemctl restart ipv6proxy.service
 }
 
-toggle_php_proxy() {
-  source /etc/default/ipv6proxy
-  CERTBOT_VENV="/opt/ipv6proxy/certbot-venv"
-  CERTBOT="\$CERTBOT_VENV/bin/certbot"
-  if [[ "\${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
-    sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=false/' "\$PROXY_ENV_FILE"
-    echo "PHP 代理已关闭。"
-  else
-    if [[ ! -x "\$CERTBOT" ]]; then
+configure_endpoint_mode() {
+  local choice mode domain cert_name public_ipv4 certbot_venv=/opt/ipv6proxy/certbot-venv certbot resolved
+  source "$PROXY_ENV_FILE"
+  echo "入口传输模式："
+  echo "1) IPv4 地址 + HTTP"
+  echo "2) IPv4 地址 + HTTPS（Let’s Encrypt IP 证书）"
+  echo "3) 域名 + HTTPS（Let’s Encrypt 域名证书）"
+  read -r -p "请选择 [1-3]: " choice < /dev/tty
+  case "$choice" in
+    1) mode=ipv4-http; domain=; cert_name=ipv6proxy-ip ;;
+    2) mode=ipv4-https; domain=; cert_name=ipv6proxy-ip ;;
+    3)
+      mode=domain-https
+      read -r -p "请输入域名（例如 qza.kdns.fr）: " domain < /dev/tty
+      [[ "$domain" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$ ]] || { echo "域名格式无效。" >&2; return 1; }
+      cert_name=ipv6proxy-domain
+      resolved=$(getent ahostsv4 "$domain" | awk 'NR==1{print $1}')
+      public_ipv4=$(curl -4fsS --max-time 10 https://api.ipify.org) || return 1
+      [[ -n "$resolved" && "$resolved" == "$public_ipv4" ]] || { echo "域名 A 记录必须指向本机公网 IPv4 ($public_ipv4)，当前解析: ${resolved:-无}" >&2; return 1; }
+      ;;
+    *) echo "无效选项。" >&2; return 1 ;;
+  esac
+  if [[ "$mode" != ipv4-http ]]; then
+    certbot="$certbot_venv/bin/certbot"
+    if [[ ! -x "$certbot" ]]; then
       apt-get update
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-venv python3-pip
-      python3 -m venv "\$CERTBOT_VENV"
-      "\$CERTBOT_VENV/bin/pip" install --upgrade pip certbot
+      python3 -m venv "$certbot_venv"
+      "$certbot_venv/bin/pip" install --upgrade pip certbot
     fi
-    public_ipv4="\$(curl -4fsS --max-time 10 https://api.ipify.org)" || { echo "无法检测公网 IPv4，PHP 代理保持关闭。" >&2; return 1; }
-    [[ "\$public_ipv4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "公网 IPv4 无效，PHP 代理保持关闭。" >&2; return 1; }
-    if [[ ! -s /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem || ! -s /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem ]]; then
-      "\$CERTBOT" --version
-      "\$CERTBOT" certonly --standalone --preferred-profile shortlived --ip-address "\$public_ipv4" --http-01-port 80 --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring --cert-name ipv6proxy-ip || { echo "公网 IP 证书申请失败，PHP 代理保持关闭。" >&2; return 1; }
+    if [[ "$mode" == domain-https ]]; then
+      "$certbot" certonly --standalone --preferred-profile shortlived -d "$domain" --http-01-port 80 --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring --cert-name "$cert_name" || return 1
+    else
+      public_ipv4="$(curl -4fsS --max-time 10 https://api.ipify.org)" || return 1
+      "$certbot" certonly --standalone --preferred-profile shortlived --ip-address "$public_ipv4" --http-01-port 80 --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring --cert-name "$cert_name" || return 1
     fi
     cat > /etc/systemd/system/ipv6proxy-cert-renew.service <<'UNIT'
 [Unit]
-Description=Renew IPv6 Proxy public IP certificate
-
+Description=Renew IPv6 Proxy TLS certificate
 [Service]
 Type=oneshot
 ExecStart=/opt/ipv6proxy/certbot-venv/bin/certbot renew --deploy-hook "systemctl try-restart ipv6proxy.service"
@@ -371,22 +403,29 @@ UNIT
     cat > /etc/systemd/system/ipv6proxy-cert-renew.timer <<'UNIT'
 [Unit]
 Description=Renew IPv6 Proxy certificate twice daily
-
 [Timer]
 OnCalendar=*-*-* 03,15:00:00
 Persistent=true
-
 [Install]
 WantedBy=timers.target
 UNIT
-    sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=true/' "\$PROXY_ENV_FILE"
-    if ! grep -q ' -tls-cert ' /etc/systemd/system/ipv6proxy.service; then
-      sed -i "s#^ExecStart=.*#ExecStart=\$BIN -cidr \$IPV6_PROXY_CIDR -real-ipv4 \$IPV6_PROXY_REAL_IPV4 -random-ipv6-port \$IPV6_PROXY_RANDOM_PORT -real-ipv4-port \$IPV6_PROXY_REAL_PORT -php-proxy \$IPV6_PROXY_PHP_ENABLED -tls-cert /etc/letsencrypt/live/ipv6proxy-ip/fullchain.pem -tls-key /etc/letsencrypt/live/ipv6proxy-ip/privkey.pem#" /etc/systemd/system/ipv6proxy.service
-    fi
     systemctl enable --now ipv6proxy-cert-renew.timer
-    echo "PHP 代理已开启。"
   fi
-  systemctl daemon-reload
+  sed -i "s#^IPV6_PROXY_ENDPOINT_MODE=.*#IPV6_PROXY_ENDPOINT_MODE=$mode#; s#^IPV6_PROXY_DOMAIN=.*#IPV6_PROXY_DOMAIN=$domain#; s#^IPV6_PROXY_CERT_NAME=.*#IPV6_PROXY_CERT_NAME=$cert_name#" "$PROXY_ENV_FILE"
+  systemctl restart ipv6proxy.service
+  systemctl is-active --quiet ipv6proxy.service
+  echo "入口模式已设置为 $mode${domain:+ ($domain)}。"
+}
+
+toggle_php_proxy() {
+  source "$PROXY_ENV_FILE"
+  if [[ "${IPV6_PROXY_PHP_ENABLED:-false}" == true ]]; then
+    sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=false/' "$PROXY_ENV_FILE"
+    echo "PHP 转发已关闭。"
+  else
+    sed -i 's/^IPV6_PROXY_PHP_ENABLED=.*/IPV6_PROXY_PHP_ENABLED=true/' "$PROXY_ENV_FILE"
+    echo "PHP 转发已开启；入口 HTTP/HTTPS 由选项 12 独立控制。"
+  fi
   systemctl restart ipv6proxy.service
   systemctl is-active --quiet ipv6proxy.service
 }
@@ -405,8 +444,9 @@ while true; do
   echo "9) 编辑配置"
   echo "10) 更新程序并重建"
   echo "11) PHP 代理: \$(awk -F= '/^IPV6_PROXY_PHP_ENABLED=/{print \$2}' "\$PROXY_ENV_FILE") (切换开/关)"
+  echo "12) 入口模式（IPv4 HTTP / IPv4 HTTPS / 域名 HTTPS）"
   echo "0) 退出"
-  read -r -p "请选择 [0-11]: " choice < /dev/tty
+  read -r -p "请选择 [0-12]: " choice < /dev/tty
   case "\$choice" in
     1) show_status; pause ;;
     2) diagnose; pause ;;
@@ -419,6 +459,7 @@ while true; do
     9) "\${EDITOR:-nano}" "\$HE_ENV_FILE"; "\${EDITOR:-nano}" "\$PROXY_ENV_FILE"; systemctl daemon-reload; pause ;;
     10) update_binary; pause ;;
     11) toggle_php_proxy; pause ;;
+    12) configure_endpoint_mode; pause ;;
     0) exit 0 ;;
     *) echo "无效选项，请输入 0-11" ;;
   esac

@@ -6,6 +6,7 @@ IPv4/IPv6 双端口 HTTP 正向代理，支持 HE 6in4 隧道、随机 IPv6 源�
 
 - `:100`：随机 IPv6 源地址出口；`目标`必须支持 IPv6
 - `:101`：服务器真实 IPv4 出口
+- 入口传输可选 IPv4+HTTP、IPv4+HTTPS、域名+HTTPS
 - HTTP forward proxy、HTTPS `CONNECT`、Basic Proxy Authentication
 - 可选 `/Proxy.php?url=...`，保留方法、请求头、查询、请求体和响应
 - PHP 目标限制为 HTTP/HTTPS，并拒绝本机、私网、链路本地、组播和未指定地址
@@ -85,7 +86,7 @@ curl --proxy https://USER:PASSWORD@156.246.95.73:101 https://api.ipify.org
 
 ## PHP 转发和 HTTPS
 
-菜单选择 `11) PHP 代理` 会安装 Certbot、申请 Let’s Encrypt 公网 IP 证书、将两个端口切换为 HTTPS，并创建 `ipv6proxy-cert-renew.timer` 自动续期：
+菜单 `12) 入口模式` 可选 IPv4+HTTP、IPv4+HTTPS（Let’s Encrypt IP 证书）或域名+HTTPS（域名证书）。域名模式要求输入域名并确认 A 记录指向服务器公网 IPv4。菜单 `11) PHP 代理` 仅控制 `/Proxy.php` endpoint，不再决定入口协议。证书由 `ipv6proxy-cert-renew.timer` 自动续期：
 
 ```sh
 curl --proxy-insecure 'https://156.246.95.73:101/Proxy.php?url=https%3A%2F%2Fapi.ipify.org'

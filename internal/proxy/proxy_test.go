@@ -16,11 +16,13 @@ import (
 
 func TestPHPProxyPreservesMethodHeadersQueryAndBody(t *testing.T) {
 	var gotMethod, gotHeader, gotQuery, gotBody string
-	handler := newPHPProxyHandlerWithTransport(true, config.AuthConfig{AllowAnonymous: true}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil }, func(net.IP) http.RoundTripper { return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-		body, _ := io.ReadAll(r.Body)
-		gotMethod, gotHeader, gotQuery, gotBody = r.Method, r.Header.Get("X-Request-Test"), r.URL.RawQuery, string(body)
-		return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("origin-response")), Request: r}, nil
-	}) })
+	handler := newPHPProxyHandlerWithTransport(true, config.AuthConfig{AllowAnonymous: true}, func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil }, func(net.IP) http.RoundTripper {
+		return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(r.Body)
+			gotMethod, gotHeader, gotQuery, gotBody = r.Method, r.Header.Get("X-Request-Test"), r.URL.RawQuery, string(body)
+			return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("origin-response")), Request: r}, nil
+		})
+	})
 	req := httptest.NewRequest(http.MethodPost, "/Proxy.php?url=https%3A%2F%2Fexample.com%2Fpath%3Fexisting%3Dyes", strings.NewReader("raw=body&x=1"))
 	req.Header.Set("X-Request-Test", "preserve-me")
 	rec := httptest.NewRecorder()
@@ -125,7 +127,7 @@ func TestCheckAuth(t *testing.T) {
 }
 
 func TestValidateConfig(t *testing.T) {
-	cfg := &config.Config{CIDR: "2001:db8::/64", RealIPv4: "192.0.2.10", RandomIPv6Port: 100, RealIPv4Port: 101, MaxConcurrent: 256}
+	cfg := &config.Config{CIDR: "2001:db8::/64", RealIPv4: "192.0.2.10", RandomIPv6Port: 100, RealIPv4Port: 101, MaxConcurrent: 256, EndpointMode: "ipv4-http"}
 	cfg.AuthConfig.AllowAnonymous = true
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -150,6 +152,18 @@ func TestValidatePHPProxyTargetRejectsPrivateLiterals(t *testing.T) {
 	for _, target := range []string{"http://127.0.0.1/", "http://169.254.169.254/", "http://[::1]/"} {
 		if _, err := validatePHPProxyTarget(target); err == nil {
 			t.Errorf("target %q was accepted", target)
+		}
+	}
+}
+
+func TestValidateEndpointMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode, domain string
+		wantErr      bool
+	}{{"ipv4-http", "", false}, {"ipv4-https", "", false}, {"domain-https", "qza.kdns.fr", false}, {"bad", "", true}, {"domain-https", "", true}, {"ipv4-http", "qza.kdns.fr", true}} {
+		err := config.ValidateEndpointMode(tc.mode, tc.domain)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("mode=%q domain=%q err=%v wantErr=%v", tc.mode, tc.domain, err, tc.wantErr)
 		}
 	}
 }
