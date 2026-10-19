@@ -49,7 +49,7 @@ func main() {
 	realMux.Handle("/Proxy.php", proxy.NewPHPProxyHandler(cfg, false))
 	randomServer := &http.Server{Addr: randomAddr, Handler: randomMux, ReadHeaderTimeout: 15 * time.Second}
 	realServer := &http.Server{Addr: realAddr, Handler: realMux, ReadHeaderTimeout: 15 * time.Second}
-	apiServer := &http.Server{Addr: net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.APIPort)), Handler: proxy.NewPHPProxyHandler(cfg, true), ReadHeaderTimeout: 15 * time.Second}
+	apiServer := &http.Server{Addr: net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.APIPort)), Handler: proxy.NewPHPProxyHandler(cfg, false), ReadHeaderTimeout: 15 * time.Second}
 	useTLS := cfg.TLSCertFile != ""
 
 	serverErrors := make(chan error, 3)
