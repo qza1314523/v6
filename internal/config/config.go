@@ -27,6 +27,7 @@ type Config struct {
 	EndpointMode      string
 	Domain            string
 	CertName          string
+	APIPort           int
 }
 
 func ValidateEndpointMode(mode, domain string) error {
@@ -77,6 +78,7 @@ func ParseFlags() *Config {
 	flag.StringVar(&cfg.EndpointMode, "endpoint-mode", "ipv4-http", "Endpoint mode: ipv4-http, ipv4-https, domain-https")
 	flag.StringVar(&cfg.Domain, "domain", "", "DNS hostname for domain-https mode")
 	flag.StringVar(&cfg.CertName, "cert-name", "ipv6proxy-ip", "Certbot certificate name")
+	flag.IntVar(&cfg.APIPort, "api-port", 443, "HTTPS API listen port")
 	flag.Parse()
 	return cfg
 }
@@ -102,6 +104,12 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxConcurrent < 1 {
 		return fmt.Errorf("-max-concurrent must be positive")
+	}
+	if c.APIPort == 0 {
+		c.APIPort = 443
+	}
+	if c.APIPort < 1 || c.APIPort > 65535 {
+		return fmt.Errorf("-api-port must be between 1 and 65535")
 	}
 	if c.AuthConfig.Username == "" && c.AuthConfig.Password != "" || c.AuthConfig.Username != "" && c.AuthConfig.Password == "" {
 		return fmt.Errorf("-username and -password must be provided together")

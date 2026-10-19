@@ -222,6 +222,7 @@ IPV6_PROXY_REAL_PORT=$IPV6_PROXY_REAL_PORT
 IPV6_PROXY_ENDPOINT_MODE=ipv4-http
 IPV6_PROXY_DOMAIN=
 IPV6_PROXY_CERT_NAME=ipv6proxy-ip
+IPV6_PROXY_API_PORT=443
 IPV6_PROXY_ALLOW_ANONYMOUS=false
 IPV6_PROXY_MAX_CONCURRENT=256
 EOF
@@ -236,7 +237,7 @@ if ! grep -q '^IPV6_PROXY_MAX_CONCURRENT=' "$PROXY_ENV_FILE" 2>/dev/null; then
 fi
 mode_default=ipv4-http
 [[ "${IPV6_PROXY_PHP_ENABLED:-false}" == true ]] && mode_default=ipv4-https
-for setting in "IPV6_PROXY_ENDPOINT_MODE=$mode_default" 'IPV6_PROXY_DOMAIN=' 'IPV6_PROXY_CERT_NAME=ipv6proxy-ip'; do
+for setting in "IPV6_PROXY_ENDPOINT_MODE=$mode_default" 'IPV6_PROXY_DOMAIN=' 'IPV6_PROXY_CERT_NAME=ipv6proxy-ip' 'IPV6_PROXY_API_PORT=443'; do
   key=${setting%%=*}
   grep -q "^${key}=" "$PROXY_ENV_FILE" || printf '%s\n' "$setting" >> "$PROXY_ENV_FILE"
 done
@@ -274,7 +275,7 @@ if [[ -f "$HE_ENV_FILE" ]]; then
   IPV6_PROXY_REAL_IPV4="${LOCAL_IPV4:-$IPV6_PROXY_REAL_IPV4}"
 fi
 mode="\${IPV6_PROXY_ENDPOINT_MODE:-ipv4-http}"
-args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}" -allow-anonymous="\${IPV6_PROXY_ALLOW_ANONYMOUS:-false}" -max-concurrent="\${IPV6_PROXY_MAX_CONCURRENT:-256}" -endpoint-mode="\$mode" -cert-name="\${IPV6_PROXY_CERT_NAME:-ipv6proxy-ip}")
+args=(-cidr "\$IPV6_PROXY_CIDR" -real-ipv4 "\$IPV6_PROXY_REAL_IPV4" -random-ipv6-port "\$IPV6_PROXY_RANDOM_PORT" -real-ipv4-port "\$IPV6_PROXY_REAL_PORT" -api-port="\${IPV6_PROXY_API_PORT:-443}" -php-proxy="\${IPV6_PROXY_PHP_ENABLED:-false}" -allow-anonymous="\${IPV6_PROXY_ALLOW_ANONYMOUS:-false}" -max-concurrent="\${IPV6_PROXY_MAX_CONCURRENT:-256}" -endpoint-mode="\$mode" -cert-name="\${IPV6_PROXY_CERT_NAME:-ipv6proxy-ip}")
 if [[ "\$mode" == domain-https ]]; then args+=(-domain "\$IPV6_PROXY_DOMAIN"); fi
 case "\$mode" in
   ipv4-http) ;;

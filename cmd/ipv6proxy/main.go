@@ -49,11 +49,15 @@ func main() {
 	realMux.Handle("/Proxy.php", proxy.NewPHPProxyHandler(cfg, false))
 	randomServer := &http.Server{Addr: randomAddr, Handler: randomMux, ReadHeaderTimeout: 15 * time.Second}
 	realServer := &http.Server{Addr: realAddr, Handler: realMux, ReadHeaderTimeout: 15 * time.Second}
+	apiServer := &http.Server{Addr: net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.APIPort)), Handler: proxy.NewPHPProxyHandler(cfg, true), ReadHeaderTimeout: 15 * time.Second}
 	useTLS := cfg.TLSCertFile != ""
 
-	serverErrors := make(chan error, 2)
+	serverErrors := make(chan error, 3)
 	go serve(randomServer, "random IPv6", useTLS, cfg.TLSCertFile, cfg.TLSKeyFile, serverErrors)
 	go serve(realServer, "real IPv4", useTLS, cfg.TLSCertFile, cfg.TLSKeyFile, serverErrors)
+	if cfg.APIPort != cfg.RandomIPv6Port && cfg.APIPort != cfg.RealIPv4Port {
+		go serve(apiServer, "HTTP API IPv6", useTLS, cfg.TLSCertFile, cfg.TLSKeyFile, serverErrors)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -70,6 +74,7 @@ func main() {
 	defer cancel()
 	_ = randomServer.Shutdown(ctx)
 	_ = realServer.Shutdown(ctx)
+	_ = apiServer.Shutdown(ctx)
 }
 
 func serve(server *http.Server, name string, useTLS bool, certFile, keyFile string, errors chan<- error) {
